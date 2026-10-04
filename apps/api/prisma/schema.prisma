@@ -1,0 +1,193 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Merchant {
+  id           String            @id @default(cuid())
+  email        String            @unique
+  passwordHash String
+  businessName String
+  createdAt    DateTime          @default(now())
+  sessions     Session[]
+  apiKeys      ApiKey[]
+  wallets      Wallet[]
+  requests     PaymentRequest[]
+  challenges   WalletChallenge[]
+}
+
+model Session {
+  id         String   @id // HMAC-SHA256 of the cookie token
+  merchantId String
+  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  ip         String?
+  userAgent  String?
+
+  @@index([merchantId])
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  merchantId String
+  merchant   Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  name       String
+  prefix     String // e.g. "pl_test_9f2a"
+  keyHash    String    @unique
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([merchantId])
+}
+
+model Wallet {
+  id            String           @id @default(cuid())
+  merchantId    String
+  merchant      Merchant         @relation(fields: [merchantId], references: [id])
+  address       String           @unique // base G address; one merchant per wallet
+  label         String?
+  verifiedAt    DateTime? // set after a valid signed challenge
+  accountExists Boolean          @default(false)
+  trustlines    Json             @default("[]") // [{ code, issuer, limit, balance, buyingLiabilities, authorized }] cached from Horizon
+  checkedAt     DateTime?
+  deletedAt     DateTime? // soft delete; still watched while it has open requests
+  createdAt     DateTime         @default(now())
+  requests      PaymentRequest[]
+  payments      ChainPayment[]
+
+  @@index([merchantId])
+}
+
+model WalletChallenge {
+  id         String    @id @default(cuid())
+  merchantId String
+  merchant   Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  address    String
+  message    String // "PayLink wallet verification\nMerchant: …\nWallet: …\nNonce: …\nExpires: …"
+  expiresAt  DateTime // 10 minutes
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([merchantId, address])
+}
+
+enum RequestStatus {
+  PENDING
+  UNDERPAID
+  PAID
+  OVERPAID
+  EXPIRED
+  CANCELLED
+  NETWORK_RESET
+}
+
+model PaymentRequest {
+  id              String         @id @default(cuid())
+  publicId        String         @unique // 12 random base62 chars, used in /pay/{publicId}
+  merchantId      String
+  merchant        Merchant       @relation(fields: [merchantId], references: [id])
+  walletId        String
+  wallet          Wallet         @relation(fields: [walletId], references: [id])
+  walletAddress   String // snapshot
+  assetCode       String // snapshot
+  assetIssuer     String? // snapshot; null = XLM
+  amountStroops   BigInt
+  receivedStroops BigInt         @default(0)
+  memo            String         @unique // "PL" + 8 Crockford base32, stored uppercase
+  status          RequestStatus  @default(PENDING)
+  description     String?
+  customerRef     String? // merchant's own order ID
+  metadata        Json?
+  expiresAt       DateTime
+  paidAt          DateTime?
+  paidTxHash      String? // tx that completed the payment
+  cancelledAt     DateTime?
+  idempotencyKey  String?
+  idempotencyHash String? // sha256 of the create body, to detect key reuse with a different body
+  createdVia      String // "dashboard" | "api"
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  payments        ChainPayment[]
+  events          RequestEvent[]
+
+  @@unique([merchantId, idempotencyKey])
+  @@index([merchantId, createdAt])
+  @@index([status, expiresAt])
+  @@index([walletId, status])
+}
+
+enum PaymentOutcome {
+  COUNTED // applied to the request's received amount
+  DUPLICATE // request already PAID or OVERPAID
+  LATE // ledger time after expiresAt
+  AFTER_CANCEL
+  WRONG_ASSET
+  WRONG_ISSUER // same code, different issuer (counterfeit)
+  WRONG_WALLET // memo belongs to a request on another wallet
+  NO_MEMO
+  UNKNOWN_MEMO
+  MEMO_TYPE_MISMATCH
+  AFTER_RESET
+}
+
+model ChainPayment {
+  eventId          String          @id // RPC event id ("hz-…" when backfilled from Horizon)
+  txHash           String
+  innerTxHash      String?
+  ledger           Int
+  ledgerClosedAt   DateTime
+  walletId         String
+  wallet           Wallet          @relation(fields: [walletId], references: [id])
+  fromAddress      String
+  toAddress        String // base G
+  toMuxedId        String?
+  memoRaw          String?
+  memoNormalized   String?
+  memoType         String // "none" | "text" | "id" | "hash"
+  assetCode        String
+  assetIssuer      String?
+  amountStroops    BigInt
+  eventType        String // "transfer" | "mint"
+  source           String // "rpc" | "horizon"
+  requestId        String?
+  request          PaymentRequest? @relation(fields: [requestId], references: [id])
+  outcome          PaymentOutcome
+  assignedManually Boolean         @default(false)
+  assignedAt       DateTime?
+  createdAt        DateTime        @default(now())
+
+  @@index([walletId, createdAt])
+  @@index([requestId])
+  @@index([outcome])
+  @@index([txHash])
+}
+
+model RequestEvent {
+  id             String         @id @default(cuid())
+  requestId      String
+  request        PaymentRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  fromStatus     RequestStatus
+  toStatus       RequestStatus
+  reason         String // "payment_counted" | "expired" | "cancelled" | "accepted" | "network_reset"
+  actor          String // "system" | "merchant" | "api"
+  paymentEventId String?
+  createdAt      DateTime       @default(now())
+
+  @@index([requestId, createdAt])
+}
+
+model Cursor {
+  name               String    @id // "rpc-events"
+  ledger             Int // last fully processed ledger
+  pagingToken        String?
+  ledgerClosedAt     DateTime? // close time of the last fully processed ledger (used by the expiry sweeper)
+  networkPassphrase  String
+  lastNetworkResetAt DateTime?
+  updatedAt          DateTime  @updatedAt
+}
