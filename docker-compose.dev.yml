@@ -1,0 +1,19 @@
+# Local development database. Start with: pnpm db:up
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: paylink
+      POSTGRES_PASSWORD: paylink
+      POSTGRES_DB: paylink
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - paylink-dev-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paylink -d paylink"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  paylink-dev-pg:
