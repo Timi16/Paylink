@@ -1,5 +1,5 @@
 import type { Request, RequestHandler } from "express";
-import { rateLimit } from "express-rate-limit";
+import { rateLimit, type Store } from "express-rate-limit";
 import { AppError } from "../lib/errors";
 
 export interface LimiterOptions {
@@ -7,6 +7,8 @@ export interface LimiterOptions {
   limit: number;
   /** Defaults to the client IP (honours `trust proxy`). */
   key?: (req: Request) => string;
+  /** Shared store; omit for an in-memory (per process) counter. */
+  store?: Store;
 }
 
 /** Fixed-window limiter that answers with the shared error shape and Retry-After. */
@@ -18,6 +20,7 @@ export function limiter(opts: LimiterOptions): RequestHandler {
     standardHeaders: "draft-7",
     legacyHeaders: false,
     ...(opts.key ? { keyGenerator: opts.key } : {}),
+    ...(opts.store ? { store: opts.store } : {}),
     handler: (req, _res, next) => {
       const info = (req as Request & { rateLimit?: { resetTime?: Date } }).rateLimit;
       const resetMs = info?.resetTime ? info.resetTime.getTime() - Date.now() : windowMs;

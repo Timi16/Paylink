@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import { EnvSchema, loadEnv } from "../../src/config/env";
 import { decodeHorizonOp } from "../../src/engine/sources/horizonBackfill";
 import { RpcEventSource } from "../../src/engine/sources/rpcEventSource";
-import { LoginThrottle } from "../../src/modules/auth/service";
 import { sep7Uri } from "../../src/modules/public/service";
 import { refundDue, refundOwed } from "../../src/modules/requests/serialize";
 import { ALLOWED, canTransition } from "../../src/modules/transitions";
@@ -164,20 +163,6 @@ describe("sep7", () => {
         `&asset_issuer=${USDC_ISSUER}&memo=PL7K2M9QXA&memo_type=MEMO_TEXT&network_passphrase=Test%20SDF%20Network%20%3B%20September%202015`,
     );
     expect(sep7Uri({ ...base, assetCode: "XLM", assetIssuer: null })).not.toContain("asset_code");
-  });
-});
-
-describe("login throttle", () => {
-  it("locks an account with a growing delay from the 3rd failure and clears on success", () => {
-    const t = new LoginThrottle();
-    t.recordFailure("a@b.c");
-    t.recordFailure("a@b.c");
-    expect(() => t.assertAllowed("a@b.c")).not.toThrow();
-    t.recordFailure("a@b.c");
-    expect(() => t.assertAllowed("a@b.c")).toThrow(/Too many failed attempts/);
-    expect(() => t.assertAllowed("other@b.c")).not.toThrow();
-    t.recordSuccess("a@b.c");
-    expect(() => t.assertAllowed("a@b.c")).not.toThrow();
   });
 });
 

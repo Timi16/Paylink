@@ -98,6 +98,7 @@ export function buildOpenApiDocument(serverUrl?: string) {
   add({ method: "post", path: "/auth/login", summary: "Log in", tag: "Auth", auth: "public", body: s.LoginBody, success: { 200: s.MerchantResponse }, errors: [400, 401, 403] });
   add({ method: "post", path: "/auth/logout", summary: "Log out", tag: "Auth", auth: "session", success: { 204: null }, errors: [403] });
   add({ method: "get", path: "/auth/me", summary: "Current merchant", tag: "Auth", auth: "session", success: { 200: s.MerchantResponse } });
+  add({ method: "post", path: "/auth/settings", summary: "Update merchant settings (automatic matching of memo-less payments by exact amount)", tag: "Auth", auth: "session", body: s.UpdateSettingsBody, success: { 200: s.MerchantResponse }, errors: [400, 403] });
   add({ method: "post", path: "/auth/password", summary: "Change password (other sessions are signed out)", tag: "Auth", auth: "session", body: s.ChangePasswordBody, success: { 204: null }, errors: [400, 403] });
 
   // API keys

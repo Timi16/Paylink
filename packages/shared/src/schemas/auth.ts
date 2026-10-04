@@ -23,10 +23,15 @@ export const ChangePasswordBody = z
   .strict();
 export type ChangePasswordBody = z.infer<typeof ChangePasswordBody>;
 
+export const UpdateSettingsBody = z.object({ autoMatchByAmount: z.boolean() }).strict();
+export type UpdateSettingsBody = z.infer<typeof UpdateSettingsBody>;
+
 export const MerchantSchema = z.object({
   id: z.string(),
   email: z.string(),
   businessName: z.string(),
+  /** When true, a memo-less payment that exactly settles the only open request it could belong to is matched automatically. */
+  autoMatchByAmount: z.boolean(),
   createdAt: z.string(),
 });
 export type Merchant = z.infer<typeof MerchantSchema>;

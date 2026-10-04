@@ -1,10 +1,10 @@
 import type { CookieOptions, Request, RequestHandler } from "express";
 import { Router } from "express";
-import { ChangePasswordBody, LoginBody, SignupBody } from "@paylink/shared";
+import { ChangePasswordBody, LoginBody, SignupBody, UpdateSettingsBody } from "@paylink/shared";
 import { isProduction } from "../../config/env";
 import { authOf, SESSION_COOKIE } from "../../middleware/auth";
 import { parse } from "../../middleware/validate";
-import { serializeMerchant, SESSION_TTL_MS, type AuthService } from "./service";
+import { DEVICE_TTL_MS, serializeMerchant, SESSION_TTL_MS, type AuthService } from "./service";
 
 const cookieOptions: CookieOptions = {
   httpOnly: true,
@@ -12,6 +12,15 @@ const cookieOptions: CookieOptions = {
   sameSite: "lax",
   path: "/",
 };
+
+/** Marks a browser that has logged in before; only ever read by /auth/login. */
+export const DEVICE_COOKIE = "pl_device";
+const deviceCookieOptions: CookieOptions = { ...cookieOptions, path: "/auth", maxAge: DEVICE_TTL_MS };
+
+function cookieOf(req: Request, name: string): string | null {
+  const value = (req.cookies as Record<string, unknown> | undefined)?.[name];
+  return typeof value === "string" && value.length > 0 && value.length <= 128 ? value : null;
+}
 
 function clientOf(req: Request) {
   return { ip: req.ip ?? null, userAgent: req.get("user-agent") ?? null };
@@ -29,21 +38,22 @@ export function authRoutes(service: AuthService, guards: AuthRouteGuards): Route
 
   router.post("/signup", guards.credentialLimiter, async (req, res) => {
     const body = parse(SignupBody, req.body);
-    const { merchant, token } = await service.signup(body, clientOf(req));
+    const { merchant, token, deviceToken } = await service.signup(body, clientOf(req));
     res.cookie(SESSION_COOKIE, token, { ...cookieOptions, maxAge: SESSION_TTL_MS });
+    res.cookie(DEVICE_COOKIE, deviceToken, deviceCookieOptions);
     res.status(201).json({ merchant: serializeMerchant(merchant) });
   });
 
   router.post("/login", guards.credentialLimiter, async (req, res) => {
     const body = parse(LoginBody, req.body);
-    const cookies = req.cookies as Record<string, unknown> | undefined;
-    const old = cookies?.[SESSION_COOKIE];
-    const { merchant, token } = await service.login(
+    const { merchant, token, deviceToken } = await service.login(
       body,
       clientOf(req),
-      typeof old === "string" && old.length <= 128 ? old : null,
+      cookieOf(req, SESSION_COOKIE),
+      cookieOf(req, DEVICE_COOKIE),
     );
     res.cookie(SESSION_COOKIE, token, { ...cookieOptions, maxAge: SESSION_TTL_MS });
+    res.cookie(DEVICE_COOKIE, deviceToken, deviceCookieOptions);
     res.json({ merchant: serializeMerchant(merchant) });
   });
 
@@ -56,6 +66,12 @@ export function authRoutes(service: AuthService, guards: AuthRouteGuards): Route
 
   router.get("/me", guards.readLimiter, guards.requireSession, async (req, res) => {
     const merchant = await service.me(authOf(req).merchantId);
+    res.json({ merchant: serializeMerchant(merchant) });
+  });
+
+  router.post("/settings", guards.readLimiter, guards.requireSession, async (req, res) => {
+    const body = parse(UpdateSettingsBody, req.body);
+    const merchant = await service.updateSettings(authOf(req).merchantId, body);
     res.json({ merchant: serializeMerchant(merchant) });
   });
 

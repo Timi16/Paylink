@@ -12,7 +12,11 @@ model Merchant {
   email        String            @unique
   passwordHash String
   businessName String
+  // Opt-in: a payment with no memo that exactly settles the one open request it could
+  // belong to is matched automatically instead of waiting for a manual assign.
+  autoMatchByAmount Boolean      @default(false)
   createdAt    DateTime          @default(now())
+  devices      TrustedDevice[]
   sessions     Session[]
   apiKeys      ApiKey[]
   wallets      Wallet[]
@@ -30,6 +34,35 @@ model Session {
   userAgent  String?
 
   @@index([merchantId])
+}
+
+// A browser that has logged in successfully before. It is exempt from the account-wide
+// login lock, so an attacker hammering a merchant's email cannot lock the merchant out.
+model TrustedDevice {
+  id         String   @id // HMAC-SHA256 of the device cookie token
+  merchantId String
+  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  @@index([merchantId])
+}
+
+// Failed-login counters, shared by every API instance.
+model LoginThrottle {
+  key         String   @id // "p:<email>|<ip>" or "e:<email>"
+  failures    Int
+  lockedUntil DateTime
+  updatedAt   DateTime @updatedAt
+}
+
+// Fixed-window counters for rate limits that must hold across API instances.
+model RateLimit {
+  key     String   @id
+  hits    Int
+  resetAt DateTime
+
+  @@index([resetAt])
 }
 
 model ApiKey {
@@ -159,6 +192,7 @@ model ChainPayment {
   requestId        String?
   request          PaymentRequest? @relation(fields: [requestId], references: [id])
   outcome          PaymentOutcome
+  matchedBy        String? // "memo" | "amount" | "manual"; null when not tied to a request by PayLink
   assignedManually Boolean         @default(false)
   assignedAt       DateTime?
   createdAt        DateTime        @default(now())

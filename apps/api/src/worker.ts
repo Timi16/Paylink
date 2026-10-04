@@ -10,6 +10,7 @@ import { RpcEventSource } from "./engine/sources/rpcEventSource";
 import { Watchdog, WATCHDOG_INTERVAL_MS } from "./engine/watchdog";
 import { WatchedWallets } from "./engine/watchedWallets";
 import { logger } from "./lib/logger";
+import { pruneCounters } from "./modules/auth/throttle";
 
 // worker process: ingestion, reconciliation, watchdog, expiry sweeper.
 
@@ -99,6 +100,7 @@ async function main(): Promise<void> {
     // 2 s between polls, none when the page was full.
     loop("ingestion", async () => ((await ingestion.tick()).full ? 0 : POLL_MS), true),
     loop("sweeper", async () => (await sweepExpired(prisma), SWEEP_INTERVAL_MS), false),
+    loop("housekeeping", async () => (await pruneCounters(prisma), 10 * 60_000), false),
     loop("reconciliation", async () => (await sleep(RECONCILE_INTERVAL_MS), controller.signal.aborted || (await reconcile(ingestion)), 0), false),
     loop("watchdog", async () => (await watchdog.check(), WATCHDOG_INTERVAL_MS), false),
   ]);

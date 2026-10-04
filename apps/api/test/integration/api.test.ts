@@ -94,6 +94,81 @@ describe("auth", () => {
     expect(Number.parseInt(locked.headers["retry-after"] as string, 10)).toBeGreaterThan(0);
   });
 
+  it("an attacker who knows the email cannot lock the merchant out of a browser they have used before", async () => {
+    const owner = request.agent(t.app); // signs up here, so this browser becomes a trusted device
+    await owner.post("/auth/signup").set("Origin", ORIGIN).send(creds);
+    const login = { email: creds.email, password: creds.password };
+    // 25 wrong passwords from 25 different addresses: no single IP trips its own lock,
+    // but together they trip the account-wide one.
+    for (let i = 0; i < 25; i++) {
+      const res = await anon().post("/auth/login").set("Origin", ORIGIN).set("X-Forwarded-For", `203.0.113.${i + 1}`).send({ ...login, password: "wrong password!" });
+      expect([401, 429]).toContain(res.status);
+    }
+    // A browser that has never logged in to this account is held back, even with the right password…
+    const stranger = await anon().post("/auth/login").set("Origin", ORIGIN).set("X-Forwarded-For", "198.51.100.7").send(login);
+    expect(stranger.status).toBe(429);
+    expect(stranger.body.error.code).toBe("RATE_LIMITED");
+    // …but the merchant's own browser gets straight in.
+    const mine = await owner.post("/auth/login").set("Origin", ORIGIN).send(login);
+    expect(mine.status).toBe(200);
+    // A successful login clears the account-wide lock for everyone.
+    expect((await anon().post("/auth/login").set("Origin", ORIGIN).set("X-Forwarded-For", "198.51.100.7").send(login)).status).toBe(200);
+    // The device cookie is httpOnly, scoped to /auth, and only its hash is stored.
+    const cookies = (await request(t.app).post("/auth/login").set("Origin", ORIGIN).send(login)).headers["set-cookie"] as unknown as string[];
+    const device = cookies.find((c) => c.startsWith("pl_device=")) as string;
+    expect(device).toMatch(/HttpOnly/);
+    expect(device).toMatch(/Path=\/auth/);
+    const token = /pl_device=([^;]+)/.exec(device)?.[1] as string;
+    expect(await prisma.trustedDevice.findUnique({ where: { id: token } })).toBeNull();
+  });
+
+  it("a device trusted for one account gives no exemption on another", async () => {
+    const attacker = request.agent(t.app);
+    await attacker.post("/auth/signup").set("Origin", ORIGIN).send({ ...creds, email: "attacker@evil.example" });
+    await anon().post("/auth/signup").set("Origin", ORIGIN).send(creds);
+    for (let i = 0; i < 25; i++) {
+      await anon().post("/auth/login").set("Origin", ORIGIN).set("X-Forwarded-For", `203.0.113.${i + 1}`).send({ email: creds.email, password: "wrong password!" });
+    }
+    // The attacker's own trusted-device cookie is for a different merchant: still locked.
+    const res = await attacker.post("/auth/login").set("Origin", ORIGIN).set("X-Forwarded-For", "198.51.100.9").send({ email: creds.email, password: creds.password });
+    expect(res.status).toBe(429);
+  });
+
+  it("login throttling and the credential rate limit hold across API instances", async () => {
+    await anon().post("/auth/signup").set("Origin", ORIGIN).send(creds);
+    const a = makeApp();
+    const b = makeApp();
+    const wrong = { email: creds.email, password: "wrong password!" };
+    // Failures spread over two instances add up to one lock.
+    expect((await request(a.app).post("/auth/login").set("Origin", ORIGIN).send(wrong)).status).toBe(401);
+    expect((await request(b.app).post("/auth/login").set("Origin", ORIGIN).send(wrong)).status).toBe(401);
+    expect((await request(a.app).post("/auth/login").set("Origin", ORIGIN).send(wrong)).status).toBe(401);
+    expect((await request(b.app).post("/auth/login").set("Origin", ORIGIN).send(wrong)).status).toBe(429);
+
+    // The 5-per-minute limit on credential endpoints is one budget, not one per instance.
+    await prisma.loginThrottle.deleteMany();
+    await prisma.rateLimit.deleteMany();
+    const c = makeApp({ authPerMin: 5 });
+    const d = makeApp({ authPerMin: 5 });
+    let n = 0;
+    const attempt = (app: typeof c) => request(app.app).post("/auth/login").set("Origin", ORIGIN).send({ email: `nobody${n++}@x.example`, password: "whatever it is" });
+    for (const app of [c, d, c, d, c]) expect((await attempt(app)).status).toBe(401);
+    expect((await attempt(d)).status).toBe(429);
+    expect((await attempt(c)).status).toBe(429);
+  });
+
+  it("merchant settings: automatic matching by amount is off by default and can be switched", async () => {
+    const m = await signup(t);
+    expect((await m.agent.get("/auth/me")).body.merchant.autoMatchByAmount).toBe(false);
+    const on = await m.agent.post("/auth/settings").set("Origin", ORIGIN).send({ autoMatchByAmount: true });
+    expect(on.status).toBe(200);
+    expect(on.body.merchant.autoMatchByAmount).toBe(true);
+    expect((await m.agent.post("/auth/settings").set("Origin", ORIGIN).send({ autoMatchByAmount: "yes" })).status).toBe(400);
+    expect((await m.agent.post("/auth/settings").set("Origin", ORIGIN).send({ businessName: "x" })).status).toBe(400);
+    expect((await m.agent.post("/auth/settings").send({ autoMatchByAmount: false })).status).toBe(403);
+    expect((await anon().post("/auth/settings").set("Origin", ORIGIN).send({ autoMatchByAmount: false })).status).toBe(401);
+  });
+
   it("logout ends the session; me requires one; expired sessions are refused", async () => {
     const m = await signup(t);
     expect((await anon().get("/auth/me")).status).toBe(401);

@@ -5,9 +5,13 @@ import { uniqueViolation } from "../../db/prisma";
 import type { AppDeps } from "../../deps";
 import { AppError } from "../../lib/errors";
 import { generateSessionToken, hashSessionToken } from "../../lib/ids";
+import { CHANNELS, notify } from "../../db/notify";
 import * as repo from "./repo";
+import { ACCOUNT_RULE, accountKey, LoginThrottle, PAIR_RULE, pairKey, passwordChangeKey } from "./throttle";
 
 export const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+export const DEVICE_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+const MAX_DEVICES = 20;
 const ARGON_OPTIONS = { type: argon2.argon2id } as const;
 
 export interface ClientInfo {
@@ -20,49 +24,14 @@ export function serializeMerchant(m: Merchant): MerchantDto {
     id: m.id,
     email: m.email,
     businessName: m.businessName,
+    autoMatchByAmount: m.autoMatchByAmount,
     createdAt: m.createdAt.toISOString(),
   };
 }
 
-/**
- * Growing per-account delay after failed logins (on top of the per-IP limit): from the 3rd
- * consecutive failure the account is locked for 2, 4, 8 … seconds, capped at 15 minutes.
- * In memory: PayLink runs a single API instance by design.
- */
-export class LoginThrottle {
-  private readonly entries = new Map<string, { failures: number; lockedUntil: number }>();
-
-  assertAllowed(email: string): void {
-    const entry = this.entries.get(email);
-    if (entry && entry.lockedUntil > Date.now()) {
-      const retryAfter = Math.ceil((entry.lockedUntil - Date.now()) / 1000);
-      throw new AppError("RATE_LIMITED", "Too many failed attempts. Try again later.", { retryAfter });
-    }
-  }
-
-  recordFailure(email: string): void {
-    if (this.entries.size > 10_000) this.prune();
-    const failures = (this.entries.get(email)?.failures ?? 0) + 1;
-    const delayMs = failures >= 3 ? Math.min(1000 * 2 ** (failures - 2), 15 * 60_000) : 0;
-    this.entries.set(email, { failures, lockedUntil: Date.now() + delayMs });
-  }
-
-  recordSuccess(email: string): void {
-    this.entries.delete(email);
-  }
-
-  private prune(): void {
-    const now = Date.now();
-    for (const [key, entry] of this.entries) {
-      if (entry.lockedUntil + 15 * 60_000 < now) this.entries.delete(key);
-    }
-    if (this.entries.size > 10_000) this.entries.clear();
-  }
-}
-
 export function createAuthService(deps: AppDeps) {
   const { prisma } = deps;
-  const throttle = new LoginThrottle();
+  const throttle = new LoginThrottle(prisma);
   // Verified against when the email is unknown, so both failure paths cost the same time.
   const dummyHash = argon2.hash("paylink-dummy-password", ARGON_OPTIONS);
 
@@ -77,11 +46,50 @@ export function createAuthService(deps: AppDeps) {
     return token;
   }
 
+  async function isTrustedDevice(deviceToken: string, email: string): Promise<boolean> {
+    if (deviceToken.length > 128) return false;
+    const device = await prisma.trustedDevice.findUnique({
+      where: { id: hashSessionToken(deviceToken) },
+      select: { merchant: { select: { email: true } } },
+    });
+    return device?.merchant.email === email;
+  }
+
+  /** Marks this browser as one that has logged in to the account; returns its cookie token. */
+  async function trustDevice(merchantId: string, existingToken: string | null): Promise<string> {
+    if (existingToken) {
+      await prisma.trustedDevice.updateMany({
+        where: { id: hashSessionToken(existingToken), merchantId },
+        data: { lastUsedAt: new Date() },
+      });
+      return existingToken;
+    }
+    const token = generateSessionToken();
+    await prisma.trustedDevice.create({ data: { id: hashSessionToken(token), merchantId } });
+    const stale = await prisma.trustedDevice.findMany({
+      where: { merchantId },
+      orderBy: { lastUsedAt: "desc" },
+      skip: MAX_DEVICES,
+      select: { id: true },
+    });
+    if (stale.length > 0) {
+      await prisma.trustedDevice.deleteMany({ where: { id: { in: stale.map((d) => d.id) } } });
+    }
+    return token;
+  }
+
   return {
+    async updateSettings(merchantId: string, input: { autoMatchByAmount: boolean }): Promise<Merchant> {
+      const merchant = await prisma.merchant.update({ where: { id: merchantId }, data: input });
+      // The worker caches this flag with its watched wallets; tell it to reload.
+      await notify(prisma, CHANNELS.walletsChanged, { walletId: "", merchantId }).catch(() => undefined);
+      return merchant;
+    },
+
     async signup(
       input: { email: string; password: string; businessName: string },
       client: ClientInfo,
-    ): Promise<{ merchant: Merchant; token: string }> {
+    ): Promise<{ merchant: Merchant; token: string; deviceToken: string }> {
       const passwordHash = await argon2.hash(input.password, ARGON_OPTIONS);
       let merchant: Merchant;
       try {
@@ -96,28 +104,47 @@ export function createAuthService(deps: AppDeps) {
         }
         throw err;
       }
-      return { merchant, token: await startSession(merchant.id, client) };
+      return {
+        merchant,
+        token: await startSession(merchant.id, client),
+        deviceToken: await trustDevice(merchant.id, null),
+      };
     },
 
-    /** `oldToken` is the cookie presented with the login, if any: it is rotated away. */
+    /**
+     * `oldToken` is the session cookie presented with the login, if any: it is rotated away.
+     * `deviceToken` is the trusted-device cookie, if any.
+     */
     async login(
       input: { email: string; password: string },
       client: ClientInfo,
       oldToken: string | null,
-    ): Promise<{ merchant: Merchant; token: string }> {
-      throttle.assertAllowed(input.email);
+      deviceToken: string | null,
+    ): Promise<{ merchant: Merchant; token: string; deviceToken: string }> {
+      const pair = pairKey(input.email, client.ip);
+      const account = accountKey(input.email);
+      // A browser that has logged in to this account before is not subject to the
+      // account-wide lock (only to its own), so failed attempts by others cannot lock it out.
+      const trusted = deviceToken ? await isTrustedDevice(deviceToken, input.email) : false;
+      await throttle.assertAllowed(trusted ? [pair] : [pair, account]);
+
       const merchant = await repo.findMerchantByEmail(prisma, input.email);
       const hash = merchant?.passwordHash ?? (await dummyHash);
       const ok = await argon2.verify(hash, input.password).catch(() => false);
       if (!merchant || !ok) {
-        throttle.recordFailure(input.email);
+        await throttle.recordFailure(pair, PAIR_RULE);
+        await throttle.recordFailure(account, ACCOUNT_RULE);
         // Same error whether the email or the password was wrong.
         throw new AppError("INVALID_CREDENTIALS", "Incorrect email or password");
       }
-      throttle.recordSuccess(input.email);
+      await throttle.clear([pair, account]);
       if (oldToken) await repo.deleteSession(prisma, hashSessionToken(oldToken));
       await repo.deleteExpiredSessions(prisma, merchant.id);
-      return { merchant, token: await startSession(merchant.id, client) };
+      return {
+        merchant,
+        token: await startSession(merchant.id, client),
+        deviceToken: await trustDevice(merchant.id, trusted ? deviceToken : null),
+      };
     },
 
     async logout(sessionId: string): Promise<void> {
@@ -137,12 +164,15 @@ export function createAuthService(deps: AppDeps) {
     ): Promise<void> {
       const merchant = await repo.findMerchant(prisma, merchantId);
       if (!merchant) throw new AppError("UNAUTHENTICATED", "Authentication required");
-      throttle.assertAllowed(merchant.email);
+      // Keyed by the signed-in merchant: only they can trip it, and it cannot block logins.
+      const key = passwordChangeKey(merchantId);
+      await throttle.assertAllowed([key]);
       const ok = await argon2.verify(merchant.passwordHash, input.currentPassword).catch(() => false);
       if (!ok) {
-        throttle.recordFailure(merchant.email);
+        await throttle.recordFailure(key, PAIR_RULE);
         throw new AppError("INVALID_CREDENTIALS", "Current password is incorrect");
       }
+      await throttle.clear([key]);
       const passwordHash = await argon2.hash(input.newPassword, ARGON_OPTIONS);
       await prisma.$transaction([
         prisma.merchant.update({ where: { id: merchantId }, data: { passwordHash } }),

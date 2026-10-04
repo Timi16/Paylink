@@ -28,7 +28,7 @@ const NO_LIMITS: Partial<Limits> = {
 
 export async function resetDb(): Promise<void> {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE "RequestEvent", "ChainPayment", "PaymentRequest", "WalletChallenge", "Wallet", "ApiKey", "Session", "Merchant", "Cursor" CASCADE',
+    'TRUNCATE "RequestEvent", "ChainPayment", "PaymentRequest", "WalletChallenge", "Wallet", "ApiKey", "Session", "TrustedDevice", "LoginThrottle", "RateLimit", "Merchant", "Cursor" CASCADE',
   );
 }
 

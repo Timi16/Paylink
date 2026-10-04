@@ -8,6 +8,7 @@ import { env } from "./config/env";
 import { DEFAULT_LIMITS, type AppDeps, type Limits } from "./deps";
 import { requireAny, requireSession, sessionOnly, authOf } from "./middleware/auth";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
+import { PgRateLimitStore } from "./middleware/pgRateLimitStore";
 import { limiter } from "./middleware/rateLimit";
 import { requestId } from "./middleware/requestId";
 import { rejectNulBytes } from "./middleware/validate";
@@ -131,7 +132,8 @@ export function buildApp(input: BuildAppDeps): BuiltApp {
     "/auth",
     requireOrigin,
     authRoutes(createAuthService(deps), {
-      credentialLimiter: limiter({ limit: limits.authPerMin }),
+      // Shared across instances: this is the brute-force limit.
+      credentialLimiter: limiter({ limit: limits.authPerMin, store: new PgRateLimitStore(prisma, "auth:") }),
       readLimiter: limiter({ limit: limits.authReadPerMin }),
       requireSession: requireSession(prisma),
     }),
