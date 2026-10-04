@@ -87,7 +87,7 @@ Phase 0 — Foundation
 [ ] docker-compose.dev.yml with Postgres 16
 [ ] Prisma schema from the Architecture tab + first migration
 [ ] Express skeleton: /health, request IDs, pino, error handler, env validation at boot
-[ ] GitHub Actions: lint → typecheck → test → build image → GHCR → deploy over SSH
+[ ] GitHub Actions: lint → typecheck → test → deploy over SSH (deploy/deploy.sh: build on the server, pm2 reload, health check, rollback)
 [ ] Server shared with Webhook: separate paylink database + DB user, Caddy route for api.paylink.<domain>
 [ ] Design direction picked; tokens in apps/web/DESIGN.md
 Gate: a push to main deploys, and https://api.paylink.<domain>/health returns 200 with DB status.

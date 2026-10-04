@@ -1,6 +1,6 @@
 Backend
 Stack and repo structure
-One TypeScript codebase in apps/api builds one Docker image that starts as either the api process or the worker process.
+One TypeScript codebase in apps/api builds once and runs as two pm2 processes: the api and the worker (ecosystem.config.cjs).
 Stack
 Concern
 Choice
@@ -62,7 +62,7 @@ apps/api/
     openapi/registry.ts, generate.ts
   test/unit/, integration/, helpers/
 packages/shared/src/schemas/, types.ts
-scripts/scenario.ts, chaos.sh, seed.ts
+apps/api/scripts/scenario.ts, seed.ts (they need the API's dependencies); scripts/chaos.sh
 Layering rule
 routes → service → repo. Repos that touch merchant data take merchantId first and include it in every where. Only transitions.ts may change PaymentRequest.status; a lint rule (or a code review check) forbids status: in any other Prisma update.
 Express app
@@ -77,7 +77,7 @@ Middleware order
 7. Routes:
     ◦ GET /health, GET /docs (Scalar), GET /openapi.json: public
     ◦ /public/*: 60/min per IP; SSE capped at 5 streams per IP
-    ◦ /auth/*: 5/min per IP, requireOrigin
+    ◦ /auth/*: requireOrigin; 5/min per IP on signup, login and password change; 60/min per IP on me and logout (the dashboard calls them on every load)
     ◦ /v1/*: requireAny (session or API key), requireOrigin on the session path, 300/min per merchant
 8. 404 → NOT_FOUND; then errorHandler
 Authentication
@@ -135,16 +135,38 @@ With Retry-After
 INTERNAL
 500
 Generic message; details only in logs
+INVALID_CREDENTIALS
+401
+Wrong email or password (same error for both)
+EMAIL_TAKEN
+409
+Signup with an email that already has an account
+PAYMENT_NOT_ASSIGNABLE
+409
+Assigning a payment that is not unmatched, or whose wallet/asset differ from the request
+LIMIT_REACHED
+409
+More than 20 active API keys
+PAYLOAD_TOO_LARGE
+413
+Body over 50 kb
+HORIZON_UNAVAILABLE
+503
+Wallet could not be checked and there is no cached check to fall back on
+SERVICE_UNAVAILABLE
+503
+Postgres unreachable, or live streams at capacity
 Pagination and shutdown
 Lists take limit (1–100, default 50) and an opaque cursor, and return { data, nextCursor }. On SIGTERM, the API stops accepting, closes SSE streams, waits up to 10 s, and disconnects Prisma; the worker finishes its current batch transaction and exits.
 Stellar engine and request matcher
 Ingestion is the same design as Webhook's; what's specific to PayLink is the matcher, which turns a detected payment into exactly one outcome and, when it counts, exactly one status change.
 Ingestion (same as Webhook)
-• rpcEventSource.ts: getEvents with startLedger then paging cursor, limit 200; filter = Stellar Asset Contract IDs for USDC (testnet issuer) and XLM, topics transfer and mint; decode with scValToNative (topics → from, to, asset string; data → amount and optional to_muxed_id).
+• rpcEventSource.ts: getEvents with startLedger then paging cursor, limit 200; filter = topics transfer and mint from any contract (not only the USDC and XLM contract IDs: a wrong-asset or wrong-issuer payment must be seen to be reported, P6/P7); decode with scValToNative (topics → from, to, asset string; data → amount and optional to_muxed_id). decode.ts accepts an event only if its contract ID is the Stellar Asset Contract derived from the asset named in the topic, so a custom contract cannot forge a payment.
 • to_muxed_id type → memoType: string → text, u64 → id, bytes → hash. If the day-2 spike shows a case where the memo is missing from the event, decode.ts falls back to getTransaction(txHash) and reads the envelope memo (cached per hash).
 • ingestion.ts loop: load cursor → check tip (reset if tip < cursor − 100) → backfill from Horizon if the cursor is older than RPC retention → fetch → keep payments to watched wallets → one transaction: matcher.process() for each + save cursor → NOTIFY → sleep 2 s (0 s if the page was full). Errors: backoff 1 s → 30 s, cursor never advanced.
 • watchedWallets.ts: every wallet where deletedAt is null, plus soft-deleted wallets that still have open requests; refreshed on NOTIFY wallets_changed and every 30 s.
-• Reconciliation (2 min, last 60 ledgers), watchdog (lag > 12 ledgers for 2 min → alert; stale heartbeat → exit for Docker restart), network reset (cursor → tip, open requests → NETWORK_RESET, alert).
+• Reconciliation (2 min, last 60 ledgers), watchdog (lag > 12 ledgers for 2 min → alert; stale heartbeat → exit so pm2 restarts the worker), network reset (cursor → tip, open requests → NETWORK_RESET, old event IDs renamed so post-reset IDs cannot collide, alert).
+• Two sources, one payment: Horizon backfill covers only ledgers older than RPC retention, and a payment already recorded from the other source (same transaction, destination, asset, amount) is skipped.
 memo.ts
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // Crockford, no I L O U
 export function generateMemo(): string; // "PL" + 8 chars from crypto.randomInt
@@ -211,7 +233,7 @@ Live status (API process)
 • Public GET /public/pay/:publicId/events: on connect, send the current snapshot; then push status events { status, amountReceived, amountRemaining, paidTxHash, expiresAt }; : ping every 25 s; close 5 s after a terminal status. Max 5 streams per IP.
 • Merchant GET /v1/stream (session): request.updated, payment.detected (including unmatched and rejected), wallet.updated.
 Wallet checks
-• On add: StrKey.isValidEd25519PublicKey; refuse S… secrets; WALLET_TAKEN if another merchant has it.
+• On add: StrKey.isValidEd25519PublicKey; refuse S… secrets; WALLET_TAKEN if another merchant has verified it (even if they later removed it). An unverified claim by another merchant is taken over, so nobody can squat on an address they don't own.
 • Account + trustline check: Horizon GET /accounts/{address}. 404 → accountExists = false. Otherwise cache trustlines (code, issuer, limit, balance) in Wallet.trustlines with checkedAt.
 • Re-checked: on request create if checkedAt is older than 5 min, and on every checkout load (cached 30 s). Checkout data includes canReceive: boolean and a reason (ACCOUNT_NOT_FOUND, NO_TRUSTLINE, TRUSTLINE_LIMIT_TOO_LOW).
 • Limit headroom: limit − balance ≥ amountRemaining, else TRUSTLINE_LIMIT_TOO_LOW.
@@ -379,9 +401,9 @@ Repo scripts
 Script
 Does
 scenario.ts
-Creates Friendbot accounts (merchant, payer, fake issuer), trustlines, a verified wallet and a merchant via the API, then runs every P and T case on testnet and asserts the final request status + payment outcome. Doubles as the demo.
+Run with the API's USDC_ISSUER set to the scenario's own issuer (pnpm scenario -- --print-issuer) so it can mint. Creates Friendbot accounts (merchant, payer, fake issuer), trustlines, a verified wallet and a merchant via the API, then runs every P and T case on testnet and asserts the final request status + payment outcome. Doubles as the demo.
 chaos.sh
-Kills the worker mid-burst, points RPC at a dead host, stops Postgres for 60 s; then checks counts and statuses
+Against the pm2 stack: kill -9 on the worker mid-burst, points RPC at a dead host, stops Postgres for 60 s; then checks counts and statuses
 seed.ts
 Demo merchant, wallet and a spread of requests in every status for local UI work
 Testing plan
@@ -434,7 +456,7 @@ Path payment (payer sends XLM, wallet gets USDC)
 Counted by USDC received
 P15
 Payer is a contract wallet (C address)
-Detected and matched normally
+Detected. Soroban transactions cannot carry a text memo, so it is NO_MEMO → assignable; if the transaction does carry a memo it is read from the envelope and matched normally
 P16
 Paid to the wallet's M-address
 Base wallet resolved; mux ID present → MEMO_TYPE_MISMATCH, assignable
@@ -498,8 +520,8 @@ M5
 Wallet removed with open requests
 Soft-deleted, still watched; requests keep their snapshot
 M6
-Wallet already owned by another merchant
-409 WALLET_TAKEN
+Wallet already verified by another merchant
+409 WALLET_TAKEN (an unverified claim is taken over)
 M7
 Same Idempotency-Key twice / with a different body
 Same request (200) / 409
@@ -540,7 +562,7 @@ Postgres down
 API 503; worker pauses without advancing the cursor
 S4
 Server reboot
-Containers restart, worker resumes from cursor
+pm2 restarts both processes, worker resumes from cursor
 S5
 Testnet reset
 Open requests → NETWORK_RESET, later payments AFTER_RESET, alert

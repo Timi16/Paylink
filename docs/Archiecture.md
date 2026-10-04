@@ -317,7 +317,7 @@ Accounts and access
 [ ] API keys: pl_test_ + 32 random bytes (base62), shown once, SHA-256 stored, revocable
 [ ] Tenant isolation: every repo function on merchant data requires merchantId; tests prove cross-merchant access returns 404
 Wallets
-[ ] One wallet, one merchant (Wallet.address @unique)
+[ ] One wallet, one merchant (Wallet.address @unique); an unverified claim never blocks the real owner
 [ ] Requests can only be created on a verified wallet: the merchant signs a server-issued challenge (10-minute expiry, single use) with Freighter's message signing; the API verifies the signature against the address
 [ ] Pasted S… secret keys are refused, never stored or logged
 Public checkout
@@ -338,26 +338,26 @@ Logs, secrets, dependencies, server
 [ ] pino redact for authorization, cookie, password and key fields
 [ ] .env never committed; .env.example current
 [ ] Lockfile committed, pnpm audit in CI, Dependabot on
-[ ] Server: UFW 22/80/443, SSH keys only, fail2ban, unattended-upgrades; Postgres only on the internal Docker network
+[ ] Server: UFW 22/80/443, SSH keys only, fail2ban, unattended-upgrades; Postgres listening on localhost only
 Infrastructure and deployment
-PayLink's backend runs as two containers on the InterServer slice it shares with Webhook (1 core, 2 GB RAM, 40 GB SSD); the web app runs on Vercel's free tier. Nothing is compiled on the server.
-Containers (PayLink's share)
-Container
+PayLink's backend runs as two pm2 processes on the InterServer slice it shares with Webhook (1 core, 2 GB RAM, 40 GB SSD); the web app runs on Vercel's free tier.
+Processes (PayLink's share)
+Process
 Memory limit
 Runs
 paylink-api
-256 MB
-Express API + SSE (node --max-old-space-size=192)
+256 MB (max_memory_restart)
+Express API + SSE (node --max-old-space-size=192), one instance, fork mode
 paylink-worker
-256 MB
+256 MB (max_memory_restart)
 Ingestion, reconciliation, watchdog, expiry sweeper
 postgres (shared)
 384 MB
 Separate paylink database and DB user
 caddy (shared)
 64 MB
-HTTPS + reverse proxy
-Every container: restart: unless-stopped, a healthcheck, Docker log rotation (max-size=10m, max-file=3). 2 GB swap as the safety net.
+HTTPS + reverse proxy to 127.0.0.1:4100
+Both processes are defined in ecosystem.config.cjs: autorestart with backoff, pm2 startup + pm2 save so they survive a reboot, pm2-logrotate for logs. The API must stay a single instance (live updates and the login throttle are in memory). 2 GB swap as the safety net.
 Domains
 Address
 Serves
@@ -368,9 +368,9 @@ Caddy → paylink-api (also serves the API reference at /docs)
 Both must share the same registrable domain so the session cookie (SameSite=Lax) is sent.
 Deploy pipeline
 1. Push to main → GitHub Actions: install, lint, typecheck, test (Postgres service container).
-2. Build one image (two start commands), push to GHCR tagged with the commit SHA.
-3. SSH with a deploy-only key: prisma migrate deploy, then docker compose pull && docker compose up -d.
-4. Poll /health for 60 s; on failure redeploy the previous SHA and fail the job.
+2. SSH with a deploy-only key and run deploy/deploy.sh <sha> on the server.
+3. The script checks out the commit, installs with the frozen lockfile, runs prisma migrate deploy, builds, then pm2 reload.
+4. It polls /health for 60 s; on failure it rebuilds the previous commit, reloads and fails the job.
 5. Vercel deploys apps/web from the same push.
 Migrations stay additive during the build so a rollback never meets a schema it can't read.
 Monitoring and backups
