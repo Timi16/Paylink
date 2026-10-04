@@ -97,7 +97,8 @@ export const PaymentSchema = z.object({
   innerTxHash: z.string().nullable(),
   ledger: z.number(),
   ledgerClosedAt: z.string(),
-  walletId: z.string(),
+  /** Null when the payment went to another merchant's wallet (WRONG_WALLET). */
+  walletId: z.string().nullable(),
   from: z.string(),
   to: z.string(),
   toMuxedId: z.string().nullable(),

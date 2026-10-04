@@ -8,7 +8,7 @@ import {
   type RequestUpdatedPayload,
   type WalletsChangedPayload,
 } from "../../db/notify";
-import { checkoutStatus, serializePayment, serializeRequest } from "../requests/serialize";
+import { checkoutStatus, presentRequest, serializePayment } from "../requests/serialize";
 import { serializeWallet } from "../wallets/service";
 
 export type MerchantEvent = {
@@ -85,7 +85,7 @@ export class LiveHub {
       const req = await this.prisma.paymentRequest.findUnique({ where: { id: p.id } });
       if (!req) return;
       this.emitPublic(req.publicId, checkoutStatus(req));
-      this.emitMerchant(req.merchantId, { type: "request.updated", data: serializeRequest(req) });
+      this.emitMerchant(req.merchantId, { type: "request.updated", data: await presentRequest(this.prisma, req) });
     } else if (channel === CHANNELS.paymentDetected) {
       const p = payload as Partial<PaymentDetectedPayload>;
       if (!p.eventId || !p.merchantId || !this.merchantSubs.has(p.merchantId)) return;
@@ -95,7 +95,7 @@ export class LiveHub {
       });
       if (!payment) return;
       const own = !payment.request || payment.request.merchantId === p.merchantId;
-      this.emitMerchant(p.merchantId, { type: "payment.detected", data: serializePayment(payment, own) });
+      this.emitMerchant(p.merchantId, { type: "payment.detected", data: serializePayment(payment, { showRequestId: own }) });
     } else if (channel === CHANNELS.walletsChanged) {
       const p = payload as Partial<WalletsChangedPayload>;
       if (!p.walletId || !p.merchantId || !this.merchantSubs.has(p.merchantId)) return;

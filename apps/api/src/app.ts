@@ -10,6 +10,7 @@ import { requireAny, requireSession, sessionOnly, authOf } from "./middleware/au
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 import { limiter } from "./middleware/rateLimit";
 import { requestId } from "./middleware/requestId";
+import { rejectNulBytes } from "./middleware/validate";
 import { requireOrigin } from "./middleware/requireOrigin";
 import { apiKeyRoutes } from "./modules/apiKeys/routes";
 import { createApiKeyService } from "./modules/apiKeys/service";
@@ -94,6 +95,7 @@ export function buildApp(input: BuildAppDeps): BuiltApp {
   // 6. Body parsing.
   app.use(express.json({ limit: "50kb" }));
   app.use(cookieParser());
+  app.use(rejectNulBytes);
 
   // 7. Routes.
   const walletService = createWalletService(deps);
@@ -143,8 +145,8 @@ export function buildApp(input: BuildAppDeps): BuiltApp {
   v1.use("/api-keys", sessionOnly, apiKeyRoutes(createApiKeyService(deps)));
   v1.use("/wallets", sessionOnly, walletRoutes(walletService));
   v1.use("/stream", sessionOnly, merchantStreamRoutes(deps, sse));
-  v1.use("/payment-requests", requestRoutes(requestService));
-  v1.use("/payments", paymentRoutes(createPaymentService(deps)));
+  v1.use("/payment-requests", requestRoutes(requestService, prisma));
+  v1.use("/payments", paymentRoutes(createPaymentService(deps), prisma));
   app.use("/v1", v1);
 
   // 8. 404, then the error handler.

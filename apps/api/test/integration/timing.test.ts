@@ -58,10 +58,11 @@ describe("timing", () => {
     const [p] = await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: req.memo }, ago(1 * MIN));
     expect(await getPayment(p!.eventId)).toMatchObject({ outcome: "LATE", requestId: req.id });
     expect(await getRequest(req.id)).toMatchObject({ status: "EXPIRED", receivedStroops: 0n });
+    expect((await merchant.agent.get(`/v1/payment-requests/${req.id}`)).body.request.refundOwed).toBe(true); // refund, or Accept
 
     const res = await accept(req.id);
     expect(res.status).toBe(200);
-    expect(res.body.request).toMatchObject({ status: "PAID", amountReceived: "50.0000000", paidTxHash: p?.txHash });
+    expect(res.body.request).toMatchObject({ status: "PAID", amountReceived: "50.0000000", paidTxHash: p?.txHash, refundOwed: false });
     expect((await getPayment(p!.eventId)).outcome).toBe("COUNTED");
     const audit = await prisma.requestEvent.findMany({ where: { requestId: req.id }, orderBy: { createdAt: "asc" } });
     expect(audit.map((a) => [a.toStatus, a.reason, a.actor])).toEqual([
@@ -114,6 +115,9 @@ describe("timing", () => {
     const [p] = await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: req.memo });
     expect(await getPayment(p!.eventId)).toMatchObject({ outcome: "AFTER_CANCEL", requestId: req.id });
     expect(await getRequest(req.id)).toMatchObject({ status: "CANCELLED", receivedStroops: 0n });
+    // Nothing was counted, but the customer's money did arrive: the merchant owes it back.
+    const detail = await merchant.agent.get(`/v1/payment-requests/${req.id}`);
+    expect(detail.body.request).toMatchObject({ status: "CANCELLED", amountReceived: "0.0000000", refundOwed: true });
   });
 
   it("T4: only a PENDING request can be cancelled", async () => {

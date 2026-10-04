@@ -1,4 +1,4 @@
-import type { ChainPayment, PaymentRequest, RequestEvent } from "@prisma/client";
+import type { ChainPayment, PaymentOutcome, PaymentRequest, RequestEvent } from "@prisma/client";
 import type {
   ChainPayment as PaymentDto,
   CheckoutStatus,
@@ -6,6 +6,7 @@ import type {
   RequestEvent as RequestEventDto,
 } from "@paylink/shared";
 import { env } from "../../config/env";
+import type { Db } from "../../db/prisma";
 import { Account, MuxedAccount } from "@stellar/stellar-sdk";
 import { formatStroops } from "../../lib/amount";
 import { memoToId } from "../../lib/memo";
@@ -28,14 +29,45 @@ export function remainingStroops(r: Pick<PaymentRequest, "amountStroops" | "rece
   return remaining > 0n ? remaining : 0n;
 }
 
-/** Funds arrived that the merchant should return: an overpayment, or money on a closed request. */
-export function refundOwed(r: Pick<PaymentRequest, "status" | "receivedStroops">): boolean {
-  if (r.status === "OVERPAID") return true;
+/** Outcomes where money reached the merchant's wallet but was not applied: it should go back. */
+export const REFUNDABLE_OUTCOMES: PaymentOutcome[] = ["DUPLICATE", "LATE", "AFTER_CANCEL", "AFTER_RESET", "WRONG_ASSET"];
+
+/**
+ * Funds arrived that the merchant should return: more than was asked, money counted on a
+ * request that then closed unpaid, or (`hasRefundablePayment`) any linked payment that was
+ * not applied: a duplicate, a late one, one after cancel or reset, or the wrong asset.
+ */
+export function refundOwed(
+  r: Pick<PaymentRequest, "status" | "receivedStroops" | "amountStroops">,
+  hasRefundablePayment = false,
+): boolean {
+  if (hasRefundablePayment || r.receivedStroops > r.amountStroops) return true;
   const closedUnpaid = r.status === "EXPIRED" || r.status === "CANCELLED" || r.status === "NETWORK_RESET";
   return closedUnpaid && r.receivedStroops > 0n;
 }
 
-export function serializeRequest(r: PaymentRequest): RequestDto {
+/** Ids, among `requestIds`, of requests that have a payment that should be refunded. */
+export async function requestsWithRefundablePayments(db: Db, requestIds: string[]): Promise<Set<string>> {
+  if (requestIds.length === 0) return new Set();
+  const rows = await db.chainPayment.findMany({
+    where: { requestId: { in: requestIds }, outcome: { in: REFUNDABLE_OUTCOMES } },
+    select: { requestId: true },
+    distinct: ["requestId"],
+  });
+  return new Set(rows.map((p) => p.requestId).filter((id): id is string => id !== null));
+}
+
+/** Serialises requests with the refund flag looked up in one query. */
+export async function presentRequests(db: Db, requests: PaymentRequest[]): Promise<RequestDto[]> {
+  const refundable = await requestsWithRefundablePayments(db, requests.map((r) => r.id));
+  return requests.map((r) => serializeRequest(r, refundable.has(r.id)));
+}
+
+export async function presentRequest(db: Db, request: PaymentRequest): Promise<RequestDto> {
+  return (await presentRequests(db, [request]))[0] as RequestDto;
+}
+
+export function serializeRequest(r: PaymentRequest, hasRefundablePayment = false): RequestDto {
   return {
     id: r.id,
     publicId: r.publicId,
@@ -57,7 +89,7 @@ export function serializeRequest(r: PaymentRequest): RequestDto {
     paidAt: r.paidAt?.toISOString() ?? null,
     paidTxHash: r.paidTxHash,
     cancelledAt: r.cancelledAt?.toISOString() ?? null,
-    refundOwed: refundOwed(r),
+    refundOwed: refundOwed(r, hasRefundablePayment),
     createdVia: r.createdVia,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
@@ -65,18 +97,23 @@ export function serializeRequest(r: PaymentRequest): RequestDto {
   };
 }
 
-/**
- * `showRequestId` is false when the linked request belongs to another merchant (a
- * WRONG_WALLET payment): the wallet owner sees the payment but not the foreign request id.
- */
-export function serializePayment(p: ChainPayment, showRequestId = true): PaymentDto {
+export interface PaymentView {
+  /** False when the linked request belongs to another merchant (a WRONG_WALLET payment seen by the wallet owner). */
+  showRequestId?: boolean;
+  /** False when the receiving wallet belongs to another merchant (the same payment seen by the request owner). */
+  showWalletId?: boolean;
+}
+
+/** Internal ids of another merchant's records are never serialised. */
+export function serializePayment(p: ChainPayment, view: PaymentView = {}): PaymentDto {
+  const { showRequestId = true, showWalletId = true } = view;
   return {
     eventId: p.eventId,
     txHash: p.txHash,
     innerTxHash: p.innerTxHash,
     ledger: p.ledger,
     ledgerClosedAt: p.ledgerClosedAt.toISOString(),
-    walletId: p.walletId,
+    walletId: showWalletId ? p.walletId : null,
     from: p.fromAddress,
     to: p.toAddress,
     toMuxedId: p.toMuxedId,

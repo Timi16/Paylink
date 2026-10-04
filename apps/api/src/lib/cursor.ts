@@ -10,7 +10,7 @@ export function decodeCursor(cursor: string): { createdAt: Date; id: string } {
     const parsed: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
     if (Array.isArray(parsed) && typeof parsed[0] === "string" && typeof parsed[1] === "string") {
       const createdAt = new Date(parsed[0]);
-      if (!Number.isNaN(createdAt.getTime()) && parsed[1].length <= 128) {
+      if (!Number.isNaN(createdAt.getTime()) && /^[\w:.-]{1,128}$/.test(parsed[1])) {
         return { createdAt, id: parsed[1] };
       }
     }
