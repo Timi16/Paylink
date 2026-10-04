@@ -2,14 +2,13 @@ import type { Wallet } from "@prisma/client";
 import { ASSET_CODES, type Wallet as WalletDto } from "@paylink/shared";
 import { StrKey } from "@stellar/stellar-sdk";
 import { CHANNELS, notify } from "../../db/notify";
-import { uniqueViolation } from "../../db/prisma";
 import type { AppDeps } from "../../deps";
 import { resolveAsset } from "../../lib/asset";
 import { AppError, notFound } from "../../lib/errors";
 import { randomNonce } from "../../lib/ids";
 import { checkCanReceive, parseTrustlines } from "./capability";
 import * as repo from "./repo";
-import { verifyWalletSignature } from "./signature";
+import { verifyWalletSignature, type SignatureInput } from "./signature";
 
 const CHALLENGE_TTL_MS = 10 * 60_000;
 
@@ -114,39 +113,52 @@ export function createWalletService(deps: AppDeps) {
       return repo.listWallets(prisma, merchantId);
     },
 
+    /**
+     * One ACTIVE wallet per address, decided under a per-address lock:
+     * - verified and active with another merchant, or removed but still owed open requests -> WALLET_TAKEN;
+     * - another merchant's unverified claim never blocks (nobody can squat on an address);
+     * - a verified wallet its owner removed, with no open requests left, is free again. The
+     *   new merchant gets a NEW row, so the old owner's requests and payments stay theirs.
+     */
     async add(merchantId: string, input: { address: string; label?: string }): Promise<Wallet> {
       assertWalletAddress(input.address);
-      const existing = await repo.findWalletByAddress(prisma, input.address);
-      let wallet: Wallet;
-      if (existing && existing.merchantId !== merchantId) {
-        // Another merchant registered this address. If they never proved ownership, the
-        // claim is worthless: let this merchant take it, so nobody can squat on an address
-        // they don't own. A verified wallet (even a removed one) stays with its owner.
-        const taken = !existing.verifiedAt && (await repo.takeOverUnverified(prisma, merchantId, existing.id, input.label ?? null));
-        if (!taken) throw new AppError("WALLET_TAKEN", "This wallet is already registered");
-        wallet = (await repo.findWallet(prisma, merchantId, existing.id)) ?? existing;
-      } else if (existing) {
-        if (existing.deletedAt === null) {
-          throw new AppError("WALLET_TAKEN", "This wallet is already registered");
+      const taken = () => new AppError("WALLET_TAKEN", "This wallet is already registered");
+      const label = input.label ?? null;
+      let wallet = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.address}))`;
+        const rows = await repo.findWalletsByAddress(tx, input.address);
+        const mine = rows.find((r) => r.merchantId === merchantId);
+        const others = rows.filter((r) => r.merchantId !== merchantId);
+        if (mine && mine.deletedAt === null) throw taken();
+        if (others.some((o) => o.deletedAt === null && o.verifiedAt)) throw taken();
+        if (others.length > 0 && (await repo.countOpenRequests(tx, others.map((o) => o.id))) > 0) {
+          throw taken();
         }
-        // The same merchant re-adding a wallet they removed: restore it. Ownership was
-        // already proven, so verifiedAt is kept.
-        const restored = await repo.updateWallet(prisma, merchantId, existing.id, {
-          deletedAt: null,
-          label: input.label ?? existing.label,
-        });
-        wallet = restored ?? existing;
-      } else {
-        try {
-          wallet = await repo.createWallet(prisma, merchantId, {
-            address: input.address,
-            label: input.label ?? null,
+        const squatters = others.filter((o) => o.deletedAt === null); // all unverified
+
+        if (mine) {
+          // Re-adding a wallet this merchant removed: restore the row. Ownership stays
+          // proven unless someone else has verified the address since.
+          for (const s of squatters) await repo.retireUnverified(tx, s.id);
+          const verifiedElsewhere = others.some(
+            (o) => o.verifiedAt && (!mine.verifiedAt || o.verifiedAt > mine.verifiedAt),
+          );
+          const restored = await repo.updateWallet(tx, merchantId, mine.id, {
+            deletedAt: null,
+            label: label ?? mine.label,
+            verifiedAt: verifiedElsewhere ? null : mine.verifiedAt,
           });
-        } catch (err) {
-          if (uniqueViolation(err)) throw new AppError("WALLET_TAKEN", "This wallet is already registered");
-          throw err;
+          return restored ?? mine;
         }
-      }
+        const [first, ...rest] = squatters;
+        for (const s of rest) await repo.retireUnverified(tx, s.id);
+        if (first && (await repo.takeOverUnverified(tx, merchantId, first.id, label))) {
+          const moved = await repo.findWallet(tx, merchantId, first.id);
+          if (moved) return moved;
+        }
+        if (first) await repo.retireUnverified(tx, first.id);
+        return repo.createWallet(tx, merchantId, { address: input.address, label });
+      });
       // Best effort: the wallet is still added if Horizon is unreachable right now.
       wallet = await refresh(wallet).catch(() => wallet);
       await announce(wallet);
@@ -178,7 +190,7 @@ export function createWalletService(deps: AppDeps) {
     async verify(
       merchantId: string,
       id: string,
-      input: { challengeId: string; signature: string },
+      input: { challengeId: string; signature: SignatureInput },
     ): Promise<Wallet> {
       const wallet = await getOwned(merchantId, id);
       const challenge = await prisma.walletChallenge.findFirst({

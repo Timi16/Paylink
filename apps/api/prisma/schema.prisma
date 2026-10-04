@@ -50,7 +50,7 @@ model Wallet {
   id            String           @id @default(cuid())
   merchantId    String
   merchant      Merchant         @relation(fields: [merchantId], references: [id])
-  address       String           @unique // base G address; one merchant per wallet
+  address       String // base G address; one ACTIVE wallet per address (enforced in the wallet service)
   label         String?
   verifiedAt    DateTime? // set after a valid signed challenge
   accountExists Boolean          @default(false)
@@ -62,6 +62,7 @@ model Wallet {
   payments      ChainPayment[]
 
   @@index([merchantId])
+  @@index([address])
 }
 
 model WalletChallenge {

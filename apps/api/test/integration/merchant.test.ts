@@ -118,6 +118,7 @@ describe("merchant setup: wallets", () => {
     const ok = await post(`/v1/wallets/${id}/verify`, { challengeId, signature: sign(kp, message) });
     expect(ok.status).toBe(200);
     expect(ok.body.wallet.verified).toBe(true);
+    expect(ok.body.wallet.verifiedAt).toBeTruthy();
     // Replay of a used challenge.
     const replay = await post(`/v1/wallets/${id}/verify`, { challengeId, signature: sign(kp, message) });
     expect(replay.status).toBe(400);
@@ -128,6 +129,31 @@ describe("merchant setup: wallets", () => {
     await prisma.walletChallenge.update({ where: { id: second.body.challengeId }, data: { expiresAt: new Date(Date.now() - 1000) } });
     const expired = await post(`/v1/wallets/${id}/verify`, { challengeId: second.body.challengeId, signature: sign(kp, second.body.message) });
     expect(expired.body.error.code).toBe("CHALLENGE_EXPIRED");
+  });
+
+  it("accepts every form Freighter returns a signature in: base64, hex, Buffer JSON, bytes, and the pre-SEP-53 raw form", async () => {
+    const forms: ((kp: Keypair, message: string) => unknown)[] = [
+      (kp, msg) => Buffer.from(kp.signMessage(msg)).toString("base64"),
+      (kp, msg) => Buffer.from(kp.signMessage(msg)).toString("hex"),
+      (kp, msg) => ({ type: "Buffer", data: [...kp.signMessage(msg)] }),
+      (kp, msg) => [...kp.signMessage(msg)],
+      (kp, msg) => Buffer.from(kp.sign(Buffer.from(msg, "utf8"))).toString("base64"),
+    ];
+    for (const sign of forms) {
+      const kp = Keypair.random();
+      const added = await post("/v1/wallets", { address: kp.publicKey() });
+      const challenge = await post(`/v1/wallets/${added.body.wallet.id}/challenge`);
+      const res = await post(`/v1/wallets/${added.body.wallet.id}/verify`, { challengeId: challenge.body.challengeId, signature: sign(kp, challenge.body.message) });
+      expect(res.status).toBe(200);
+      expect(res.body.wallet.verified).toBe(true);
+    }
+    const kp = Keypair.random();
+    const added = await post("/v1/wallets", { address: kp.publicKey() });
+    const challenge = await post(`/v1/wallets/${added.body.wallet.id}/challenge`);
+    for (const signature of [[1, 2, 3], { type: "Buffer", data: [] }, { type: "Buffer", data: Array(64).fill(0) }, 12345, null]) {
+      const res = await post(`/v1/wallets/${added.body.wallet.id}/verify`, { challengeId: challenge.body.challengeId, signature });
+      expect(res.status).toBe(400);
+    }
   });
 
   it("a challenge issued for one wallet cannot verify another", async () => {
@@ -225,16 +251,55 @@ describe("merchant setup: wallets", () => {
     expect(again.body.wallet).toMatchObject({ id: wallet.id, verified: true });
   });
 
-  it("M6: a wallet already owned by another merchant is 409 WALLET_TAKEN (even after they removed it)", async () => {
+  it("M6: a wallet verified by another merchant is 409 WALLET_TAKEN, also while removed with open requests", async () => {
     const wallet = await addVerifiedWallet(m);
     const other = await signup(t, "Other");
-    const res = await other.agent.post("/v1/wallets").set("Origin", ORIGIN).send({ address: wallet.address });
+    const tryAdd = () => other.agent.post("/v1/wallets").set("Origin", ORIGIN).send({ address: wallet.address });
+    const res = await tryAdd();
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe("WALLET_TAKEN");
     expect((await post("/v1/wallets", { address: wallet.address })).status).toBe(409); // own duplicate
+    await createRequest(m, wallet);
     await m.agent.delete(`/v1/wallets/${wallet.id}`).set("Origin", ORIGIN);
-    const after = await other.agent.post("/v1/wallets").set("Origin", ORIGIN).send({ address: wallet.address });
-    expect(after.status).toBe(409);
+    expect((await tryAdd()).status).toBe(409); // removed, but an open request still expects money there
+  });
+
+  it("M6: a removed wallet with no open requests can be claimed by another merchant, without the old owner's history", async () => {
+    const key = Keypair.random();
+    const wallet = await addVerifiedWallet(m, key);
+    const req = await createRequest(m, wallet);
+    const e = makeEngine();
+    await e.ingestion.tick();
+    await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: req.memo });
+    await m.agent.delete(`/v1/wallets/${wallet.id}`).set("Origin", ORIGIN);
+
+    const other = await signup(t, "New Owner");
+    const claimed = await addVerifiedWallet(other, key); // must prove ownership again
+    expect(claimed.id).not.toBe(wallet.id);
+    expect(claimed.address).toBe(wallet.address);
+    // The new owner sees none of the old owner's requests or payments; the old owner keeps them.
+    expect((await other.agent.get("/v1/payments")).body.data).toEqual([]);
+    expect((await other.agent.get("/v1/payment-requests")).body.data).toEqual([]);
+    expect((await m.agent.get("/v1/payments")).body.data).toHaveLength(1);
+    expect((await m.agent.get(`/v1/payment-requests/${req.id}`)).body.request.status).toBe("PAID");
+
+    // Money sent now with the OLD owner's memo went to the new owner's wallet: it is theirs,
+    // and it cannot touch the old request.
+    const [late] = await e.pay({ to: wallet.address, amountStroops: USDC(5), memoRaw: req.memo });
+    expect(await prisma.chainPayment.findUniqueOrThrow({ where: { eventId: late!.eventId } })).toMatchObject({ outcome: "WRONG_WALLET", walletId: claimed.id });
+    expect((await other.agent.get("/v1/payments")).body.data).toMatchObject([{ outcome: "WRONG_WALLET", requestId: null }]);
+    // New requests on it work for the new owner.
+    const fresh = await createRequest(other, claimed);
+    await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: fresh.memo });
+    expect((await other.agent.get(`/v1/payment-requests/${fresh.id}`)).body.request.status).toBe("PAID");
+
+    // The first owner cannot take it back while it is active elsewhere…
+    expect((await post("/v1/wallets", { address: wallet.address })).status).toBe(409);
+    // …and after the new owner removes it, gets it back UNVERIFIED (someone else proved ownership since).
+    await other.agent.delete(`/v1/wallets/${claimed.id}`).set("Origin", ORIGIN);
+    const back = await post("/v1/wallets", { address: wallet.address });
+    expect(back.status).toBe(201);
+    expect(back.body.wallet).toMatchObject({ id: wallet.id, verified: false });
   });
 
   it("M6: an unverified claim cannot squat on an address: the next merchant takes it, and verification settles it", async () => {
@@ -247,7 +312,7 @@ describe("merchant setup: wallets", () => {
     // The real owner can still add and verify it.
     const mine = await addVerifiedWallet(m, owner);
     expect((await squatter.agent.get("/v1/wallets")).body.data).toEqual([]);
-    expect(await prisma.wallet.count({ where: { address: owner.publicKey() } })).toBe(1);
+    expect(await prisma.wallet.count({ where: { address: owner.publicKey(), deletedAt: null } })).toBe(1);
     // The squatter's old challenge is useless, even with a valid signature.
     const signature = Buffer.from(owner.signMessage(staleChallenge.body.message)).toString("base64");
     const replay = await squatter.agent.post(`/v1/wallets/${mine.id}/verify`).set("Origin", ORIGIN).send({ challengeId: staleChallenge.body.challengeId, signature });
@@ -255,7 +320,7 @@ describe("merchant setup: wallets", () => {
     // Once verified it cannot be taken.
     const again = await squatter.agent.post("/v1/wallets").set("Origin", ORIGIN).send({ address: owner.publicKey() });
     expect(again.status).toBe(409);
-    expect((await prisma.wallet.findFirstOrThrow({ where: { address: owner.publicKey() } })).merchantId).toBe(m.id);
+    expect((await prisma.wallet.findFirstOrThrow({ where: { address: owner.publicKey(), deletedAt: null } })).merchantId).toBe(m.id);
   });
 
   it("M6: two merchants adding the same wallet at once leave exactly one row with one owner", async () => {
@@ -268,7 +333,7 @@ describe("merchant setup: wallets", () => {
     expect([201, 409]).toContain(a.status);
     expect([201, 409]).toContain(b.status);
     expect([a.status, b.status]).toContain(201);
-    expect(await prisma.wallet.count({ where: { address } })).toBe(1);
+    expect(await prisma.wallet.count({ where: { address, deletedAt: null } })).toBe(1);
     const mine = (await m.agent.get("/v1/wallets")).body.data.length;
     const theirs = (await other.agent.get("/v1/wallets")).body.data.length;
     expect(mine + theirs).toBe(1);
