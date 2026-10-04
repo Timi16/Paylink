@@ -20,7 +20,10 @@ function originOf(value: string | undefined): string | null {
  */
 export const requireOrigin: RequestHandler = (req, _res, next) => {
   if (SAFE_METHODS.has(req.method) || req.auth?.via === "apiKey") return next();
-  const origin = originOf(req.get("origin")) ?? originOf(req.get("referer"));
+  // Referer is only a fallback for clients that send no Origin at all. An Origin that is
+  // present but unusable ("null" from a sandboxed frame) must not be rescued by a Referer.
+  const header = req.get("origin");
+  const origin = header !== undefined ? originOf(header) : originOf(req.get("referer"));
   if (origin !== env.WEB_ORIGIN) {
     return next(new AppError("FORBIDDEN_ORIGIN", "Request origin not allowed"));
   }

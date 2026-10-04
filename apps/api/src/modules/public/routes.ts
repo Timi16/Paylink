@@ -38,6 +38,7 @@ export function publicRoutes(deps: AppDeps, service: PublicService, sse: SseRegi
 
     const stream = sse.open(req, res, key, PUBLIC_STREAM_MAX_MS);
     let closeTimer: NodeJS.Timeout | null = null;
+    let liveDelivered = false;
     const push = (status: CheckoutStatus) => {
       stream.send("status", status);
       // The stream has done its job once the request is no longer open.
@@ -47,12 +48,18 @@ export function publicRoutes(deps: AppDeps, service: PublicService, sse: SseRegi
       }
     };
     // Subscribe first, then send the snapshot: a change in between is delivered, not lost.
-    const unsubscribe = deps.hub.subscribePublic(publicId, push);
+    const unsubscribe = deps.hub.subscribePublic(publicId, (status) => {
+      liveDelivered = true;
+      push(status);
+    });
     res.on("close", () => {
       unsubscribe();
       if (closeTimer) clearTimeout(closeTimer);
     });
-    push(checkoutStatus(await service.findRequest(publicId)));
+    const snapshot = checkoutStatus(await service.findRequest(publicId));
+    // If a live update got there first it is at least as new as this read; sending the
+    // snapshot after it could put an older status (PENDING after PAID) on the customer's screen.
+    if (!liveDelivered) push(snapshot);
   });
 
   return router;

@@ -12,7 +12,7 @@ import { checkoutStatus, presentRequest, serializePayment } from "../requests/se
 import { serializeWallet } from "../wallets/service";
 
 export type MerchantEvent = {
-  type: "request.updated" | "payment.detected" | "wallet.updated";
+  type: "request.updated" | "payment.detected" | "wallet.updated" | "resync";
   data: unknown;
 };
 type PublicListener = (status: CheckoutStatus) => void;
@@ -36,6 +36,7 @@ function add<K, V>(map: Map<K, Set<V>>, key: K, value: V): () => void {
 export class LiveHub {
   private readonly publicSubs = new Map<string, Set<PublicListener>>();
   private readonly merchantSubs = new Map<string, Set<MerchantListener>>();
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly prisma: PrismaClient,
@@ -50,18 +51,25 @@ export class LiveHub {
     return add(this.merchantSubs, merchantId, fn);
   }
 
+  /**
+   * Notifications are handled strictly one after another. Each one re-reads the row, so if
+   * two were handled concurrently the older read could be emitted last and leave a stale
+   * status on screen.
+   */
   handleNotification = (channel: Channel, payload: unknown): void => {
-    this.dispatch(channel, payload).catch((err: unknown) =>
-      this.logger.error({ err, channel }, "live hub: dispatch failed"),
-    );
+    this.queue = this.queue
+      .then(() => this.dispatch(channel, payload))
+      .catch((err: unknown) => this.logger.error({ err, channel }, "live hub: dispatch failed"));
   };
 
   /** After the LISTEN connection reconnects: notifications may have been lost, so resend. */
   resync = (): void => {
-    for (const publicId of this.publicSubs.keys()) {
-      this.prisma.paymentRequest
-        .findUnique({ where: { publicId } })
-        .then((req) => {
+    // Dashboards refetch on this; checkouts get their current status pushed.
+    for (const merchantId of this.merchantSubs.keys()) this.emitMerchant(merchantId, { type: "resync", data: {} });
+    for (const publicId of [...this.publicSubs.keys()]) {
+      this.queue = this.queue
+        .then(async () => {
+          const req = await this.prisma.paymentRequest.findUnique({ where: { publicId } });
           if (req) this.emitPublic(publicId, checkoutStatus(req));
         })
         .catch((err: unknown) => this.logger.warn({ err }, "live hub: resync failed"));

@@ -130,6 +130,8 @@ describe("auth", () => {
     expect((await m.agent.post("/v1/api-keys").set("Origin", "https://evil.example").send({ name: "k" })).status).toBe(403);
     expect((await m.agent.post("/v1/api-keys").set("Origin", `${ORIGIN}.evil.example`).send({ name: "k" })).status).toBe(403);
     expect((await m.agent.post("/v1/api-keys").set("Origin", "null").send({ name: "k" })).status).toBe(403);
+    // A sandboxed frame sends Origin: null; a matching Referer must not rescue it.
+    expect((await m.agent.post("/v1/api-keys").set("Origin", "null").set("Referer", `${ORIGIN}/x`).send({ name: "k" })).status).toBe(403);
     expect((await m.agent.post("/v1/api-keys").set("Referer", `${ORIGIN}/dashboard/keys`).send({ name: "k" })).status).toBe(201);
     expect((await m.agent.post("/auth/logout")).status).toBe(403);
     expect((await anon().post("/auth/login").send({ email: creds.email, password: creds.password })).status).toBe(403);

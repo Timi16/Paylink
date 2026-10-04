@@ -199,6 +199,22 @@ describe("checkout API", () => {
     await sse.waitFor((c) => c.statuses().includes("PAID"));
   });
 
+  it("C6: rapid status changes reach the stream in order: the last event is the final status", async () => {
+    const req = await createRequest(merchant, wallet, { amount: "10" });
+    const sse = await SseClient.connect(`${base}/public/pay/${req.publicId}/events`);
+    await sse.waitFor((c) => c.events.length >= 1);
+    // Ten partial payments in ten ledgers, ingested back to back.
+    for (let i = 0; i < 10; i++) e.source.closeLedger(new Date(), [{ to: wallet.address, amountStroops: USDC(1), memoRaw: req.memo }]);
+    while ((await e.ingestion.tick()).processed > 0);
+    await sse.waitFor((c) => c.statuses().includes("PAID"));
+    await new Promise((r) => setTimeout(r, 300));
+    const received = sse.events.filter((ev) => ev.event === "status").map((ev) => ev.data.amountReceived as string);
+    expect(received.at(-1)).toBe("10.0000000");
+    expect(sse.statuses().at(-1)).toBe("PAID");
+    // Amounts never go backwards on the customer's screen.
+    expect([...received].sort()).toEqual(received);
+  });
+
   it("caps open streams at 5 per IP", async () => {
     const req = await createRequest(merchant, wallet);
     const url = `${base}/public/pay/${req.publicId}/events`;
