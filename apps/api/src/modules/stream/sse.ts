@@ -21,8 +21,12 @@ export class SseRegistry {
     return this.perKey.get(key) ?? 0;
   }
 
-  /** Opens a stream counted against `key` (an IP or a merchant id). */
-  open(req: Request, res: Response, key: string): SseStream {
+  /**
+   * Opens a stream counted against `key` (an IP or a merchant id). It is closed after
+   * `maxLifetimeMs` so a stream cannot outlive its session or linger forever; EventSource
+   * reconnects by itself and gets a fresh snapshot.
+   */
+  open(_req: Request, res: Response, key: string, maxLifetimeMs: number): SseStream {
     res.status(200).set({
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
@@ -37,6 +41,8 @@ export class SseRegistry {
       if (!closed) res.write(": ping\n\n");
     }, PING_MS);
     ping.unref();
+    const lifetime = setTimeout(() => stream.close(), maxLifetimeMs);
+    lifetime.unref();
 
     const stream: SseStream = {
       get closed() {
@@ -49,6 +55,7 @@ export class SseRegistry {
         if (closed) return;
         closed = true;
         clearInterval(ping);
+        clearTimeout(lifetime);
         this.streams.delete(stream);
         const left = this.count(key) - 1;
         if (left > 0) this.perKey.set(key, left);
@@ -58,7 +65,8 @@ export class SseRegistry {
     };
     this.streams.add(stream);
     this.perKey.set(key, this.count(key) + 1);
-    req.on("close", stream.close);
+    // The response's close event is the reliable signal that the client went away.
+    res.on("close", stream.close);
     res.on("error", stream.close);
     return stream;
   }

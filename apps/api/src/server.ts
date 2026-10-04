@@ -29,8 +29,8 @@ async function main(): Promise<void> {
     logger,
   });
 
-  const server = app.listen(env.PORT, () => {
-    logger.info({ port: env.PORT, env: env.NODE_ENV }, "api listening");
+  const server = app.listen(env.PORT, env.HOST, () => {
+    logger.info({ host: env.HOST, port: env.PORT, env: env.NODE_ENV }, "api listening");
   });
   server.keepAliveTimeout = 65_000;
   server.headersTimeout = 66_000;

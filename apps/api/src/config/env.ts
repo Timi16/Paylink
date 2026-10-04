@@ -8,6 +8,9 @@ const url = z.string().url();
 export const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().min(1).max(65535).default(4100),
+  // Loopback by default: the API sits behind a reverse proxy on the same machine. Reached
+  // directly, a client could forge X-Forwarded-For and dodge the per-IP rate limits.
+  HOST: z.string().min(1).default("127.0.0.1"),
   DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//, "must be a postgresql:// URL"),
   STELLAR_RPC_URL: url,
   HORIZON_URL: url,
