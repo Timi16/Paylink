@@ -5,6 +5,8 @@ export interface WatchedWallet {
   id: string;
   merchantId: string;
   address: string;
+  /** The owning merchant's opt-in for matching memo-less payments by exact amount. */
+  autoMatchByAmount: boolean;
 }
 
 /**
@@ -30,9 +32,14 @@ export class WatchedWallets {
       where: {
         OR: [{ deletedAt: null }, { requests: { some: { status: { in: OPEN_STATUSES } } } }],
       },
-      select: { id: true, merchantId: true, address: true },
+      select: { id: true, merchantId: true, address: true, merchant: { select: { autoMatchByAmount: true } } },
     });
-    this.byAddress = new Map(rows.map((w) => [w.address, w]));
+    this.byAddress = new Map(
+      rows.map((w) => [
+        w.address,
+        { id: w.id, merchantId: w.merchantId, address: w.address, autoMatchByAmount: w.merchant.autoMatchByAmount },
+      ]),
+    );
     this.loadedAt = Date.now();
     this.dirty = false;
   }

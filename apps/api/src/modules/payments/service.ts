@@ -15,6 +15,36 @@ const isUnmatched = (outcome: PaymentOutcome): boolean =>
 
 export function createPaymentService(deps: AppDeps) {
   const { prisma } = deps;
+  /**
+   * For each unmatched payment, the request it most likely belongs to: the single open,
+   * unexpired request on the same wallet and asset whose remaining amount equals the
+   * payment exactly. Lets the dashboard offer a one-click assign. Never more than a hint.
+   */
+  async function suggestRequests(merchantId: string, payments: ChainPayment[]): Promise<Map<string, string>> {
+    const unmatched = payments.filter(
+      (p) => p.requestId === null && isUnmatched(p.outcome) && !p.eventId.startsWith(RESET_EVENT_PREFIX),
+    );
+    const suggestions = new Map<string, string>();
+    if (unmatched.length === 0) return suggestions;
+    const open = await prisma.paymentRequest.findMany({
+      where: { merchantId, walletId: { in: [...new Set(unmatched.map((p) => p.walletId))] }, status: { in: ["PENDING", "UNDERPAID"] } },
+      select: { id: true, walletId: true, assetCode: true, assetIssuer: true, amountStroops: true, receivedStroops: true, expiresAt: true },
+      take: 1000,
+    });
+    for (const p of unmatched) {
+      const fits = open.filter(
+        (r) =>
+          r.walletId === p.walletId &&
+          r.assetCode === p.assetCode &&
+          (r.assetIssuer ?? null) === (p.assetIssuer ?? null) &&
+          r.amountStroops - r.receivedStroops === p.amountStroops &&
+          r.expiresAt.getTime() >= p.ledgerClosedAt.getTime(),
+      );
+      if (fits.length === 1 && fits[0]) suggestions.set(p.eventId, fits[0].id);
+    }
+    return suggestions;
+  }
+
   return {
     async list(merchantId: string, query: ListPaymentsQuery) {
       const rows = await repo.listPayments(prisma, merchantId, {
@@ -28,6 +58,7 @@ export function createPaymentService(deps: AppDeps) {
       const last = data[data.length - 1];
       return {
         data,
+        suggestions: await suggestRequests(merchantId, data),
         nextCursor: rows.length > query.limit && last ? encodeCursor(last.createdAt, last.eventId) : null,
       };
     },
@@ -74,7 +105,7 @@ export function createPaymentService(deps: AppDeps) {
         const outcome = await applyToRequest(tx, facts, req);
         const updated = await tx.chainPayment.update({
           where: { eventId },
-          data: { outcome, requestId, assignedManually: true, assignedAt: new Date() },
+          data: { outcome, requestId, matchedBy: "manual", assignedManually: true, assignedAt: new Date() },
         });
         await notify(tx, CHANNELS.paymentDetected, { eventId, merchantId });
         const request = await tx.paymentRequest.findUniqueOrThrow({ where: { id: requestId } });

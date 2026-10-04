@@ -3,6 +3,7 @@ import { CHANNELS, notify } from "../db/notify";
 import type { Tx } from "../db/prisma";
 import { idToMemo, normalizeMemo } from "../lib/memo";
 import {
+  lockRequestById,
   lockRequestByMemo,
   recordPartialPayment,
   transitionRequest,
@@ -96,10 +97,41 @@ function sanitizeText(value: string | null, max: number): string | null {
  * Turns one detected payment into exactly one outcome. Runs inside the ingestion batch
  * transaction, so the payment row, the request change and the cursor commit together.
  */
+/**
+ * Opt-in fallback for a payment with no reference at all (e.g. a contract wallet paying the
+ * plain G address). It is matched only when there is no doubt about which request it is
+ * for: exactly ONE open, unexpired request on this wallet and asset whose remaining amount
+ * equals the payment to the stroop. Two candidates, or any difference in amount, and it
+ * stays in Unmatched for the merchant.
+ */
+async function lockSoleAmountMatch(
+  tx: Tx,
+  walletId: string,
+  payment: NormalizedPayment,
+): Promise<PaymentRequest | null> {
+  const candidates = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "PaymentRequest"
+    WHERE "walletId" = ${walletId}
+      AND "assetCode" = ${payment.assetCode}
+      AND "assetIssuer" IS NOT DISTINCT FROM ${payment.assetIssuer}::text
+      AND "status" IN ('PENDING', 'UNDERPAID')
+      AND "expiresAt" >= ${payment.ledgerClosedAt}
+      AND "amountStroops" - "receivedStroops" = ${payment.amountStroops}
+    LIMIT 2`;
+  const only = candidates.length === 1 ? candidates[0] : undefined;
+  if (!only) return null;
+  const req = await lockRequestById(tx, only.id);
+  // Re-check under the lock: it may have been paid, cancelled or part-paid meanwhile.
+  if (!req || (req.status !== "PENDING" && req.status !== "UNDERPAID")) return null;
+  if (req.amountStroops - req.receivedStroops !== payment.amountStroops) return null;
+  if (payment.ledgerClosedAt.getTime() > req.expiresAt.getTime()) return null;
+  return req;
+}
+
 export async function processPayment(
   tx: Tx,
   payment: NormalizedPayment,
-  wallet: { id: string; merchantId: string },
+  wallet: { id: string; merchantId: string; autoMatchByAmount?: boolean },
 ): Promise<ProcessResult> {
   const memoRaw = sanitizeText(payment.memoRaw, 128);
   // Idempotency guard: the event id is the primary key. A concurrent transaction inserting
@@ -133,9 +165,29 @@ export async function processPayment(
   let outcome: PaymentOutcome;
   let requestId: string | null = null;
   let memoNormalized: string | null = null;
+  let matchedBy: "memo" | "amount" | null = null;
 
   if (payment.memoType === "none" || memoRaw === null || memoRaw === "") {
     outcome = "NO_MEMO";
+    const req = wallet.autoMatchByAmount ? await lockSoleAmountMatch(tx, wallet.id, payment) : null;
+    if (req) {
+      requestId = req.id;
+      matchedBy = "amount";
+      outcome = await applyToRequest(
+        tx,
+        {
+          eventId: payment.eventId,
+          txHash: payment.txHash,
+          ledgerClosedAt: payment.ledgerClosedAt,
+          toAddress: payment.to,
+          walletId: wallet.id,
+          assetCode: payment.assetCode,
+          assetIssuer: payment.assetIssuer,
+          amountStroops: payment.amountStroops,
+        },
+        req,
+      );
+    }
   } else if (payment.memoType === "hash") {
     outcome = "MEMO_TYPE_MISMATCH";
   } else {
@@ -148,6 +200,7 @@ export async function processPayment(
       if (payment.memoType !== "text") memoNormalized = null;
     } else {
       requestId = req.id; // every outcome below shows on the request
+      matchedBy = "memo";
       const facts: PaymentFacts = {
         eventId: payment.eventId,
         txHash: payment.txHash,
@@ -165,6 +218,7 @@ export async function processPayment(
         outcome = "MEMO_TYPE_MISMATCH";
         requestId = null;
         memoNormalized = null;
+        matchedBy = null;
       } else {
         outcome = mismatch ?? (await applyToRequest(tx, facts, req));
       }
@@ -173,7 +227,7 @@ export async function processPayment(
 
   await tx.chainPayment.update({
     where: { eventId: payment.eventId },
-    data: { outcome, requestId, memoNormalized },
+    data: { outcome, requestId, memoNormalized, matchedBy },
   });
   await notify(tx, CHANNELS.paymentDetected, {
     eventId: payment.eventId,

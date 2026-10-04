@@ -119,6 +119,10 @@ export const PaymentSchema = z.object({
   source: z.string(),
   requestId: z.string().nullable(),
   outcome: z.enum(PAYMENT_OUTCOMES),
+  /** How the payment was tied to its request: "memo", "amount" (automatic, opt-in) or "manual". */
+  matchedBy: z.string().nullable(),
+  /** Unmatched payments in list responses: the one open request this payment exactly settles. */
+  suggestedRequestId: z.string().nullable(),
   assignedManually: z.boolean(),
   assignedAt: z.string().nullable(),
   createdAt: z.string(),

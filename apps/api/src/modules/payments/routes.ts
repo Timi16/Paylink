@@ -12,9 +12,14 @@ export function paymentRoutes(service: PaymentService, prisma: PrismaClient): Ro
   router.get("/", async (req, res) => {
     const merchantId = authOf(req).merchantId;
     const query = parse(ListPaymentsQuery, req.query);
-    const { data, nextCursor } = await service.list(merchantId, query);
+    const { data, suggestions, nextCursor } = await service.list(merchantId, query);
     res.json({
-      data: data.map((p) => serializePayment(p, { showRequestId: !p.request || p.request.merchantId === merchantId })),
+      data: data.map((p) =>
+        serializePayment(p, {
+          showRequestId: !p.request || p.request.merchantId === merchantId,
+          suggestedRequestId: suggestions.get(p.eventId) ?? null,
+        }),
+      ),
       nextCursor,
     });
   });

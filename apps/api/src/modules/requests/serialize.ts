@@ -139,11 +139,13 @@ export interface PaymentView {
   showRequestId?: boolean;
   /** False when the receiving wallet belongs to another merchant (the same payment seen by the request owner). */
   showWalletId?: boolean;
+  /** Unmatched payments only: the one open request this payment exactly settles, if any. */
+  suggestedRequestId?: string | null;
 }
 
 /** Internal ids of another merchant's records are never serialised. */
 export function serializePayment(p: ChainPayment, view: PaymentView = {}): PaymentDto {
-  const { showRequestId = true, showWalletId = true } = view;
+  const { showRequestId = true, showWalletId = true, suggestedRequestId = null } = view;
   return {
     eventId: p.eventId,
     txHash: p.txHash,
@@ -164,6 +166,8 @@ export function serializePayment(p: ChainPayment, view: PaymentView = {}): Payme
     source: p.source,
     requestId: showRequestId ? p.requestId : null,
     outcome: p.outcome,
+    matchedBy: showRequestId ? p.matchedBy : null,
+    suggestedRequestId,
     assignedManually: p.assignedManually,
     assignedAt: p.assignedAt?.toISOString() ?? null,
     createdAt: p.createdAt.toISOString(),

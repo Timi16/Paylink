@@ -339,6 +339,102 @@ describe("matching", () => {
   });
 });
 
+describe("payments with no reference at all", () => {
+  const enable = () => merchant.agent.post("/auth/settings").set("Origin", ORIGIN).send({ autoMatchByAmount: true });
+  const unmatchedList = async () => (await merchant.agent.get("/v1/payments?unmatched=true")).body.data;
+
+  it("P2: by default it stays unmatched, with the one request it exactly settles suggested for a one-click assign", async () => {
+    const req = await createRequest(merchant, wallet, { amount: "37.5" });
+    await createRequest(merchant, wallet, { amount: "12" });
+    const [p] = await e.pay({ to: wallet.address, amountStroops: 375_000_000n });
+    expect(await getPayment(p!.eventId)).toMatchObject({ outcome: "NO_MEMO", requestId: null, matchedBy: null });
+    expect(await unmatchedList()).toMatchObject([{ eventId: p?.eventId, suggestedRequestId: req.id }]);
+    const res = await merchant.agent.post(`/v1/payments/${p!.eventId}/assign`).set("Origin", ORIGIN).send({ requestId: req.id });
+    expect(res.body.payment).toMatchObject({ outcome: "COUNTED", matchedBy: "manual" });
+  });
+
+  it("P2: no suggestion when the amount fits no request, fits two, or the request has expired", async () => {
+    await createRequest(merchant, wallet, { amount: "20" });
+    await createRequest(merchant, wallet, { amount: "20" });
+    const expired = await createRequest(merchant, wallet, { amount: "30" });
+    await prisma.paymentRequest.update({ where: { id: expired.id }, data: { expiresAt: new Date(Date.now() - 60_000) } });
+    await e.pay([
+      { to: wallet.address, amountStroops: USDC(20) }, // two candidates
+      { to: wallet.address, amountStroops: USDC(19) }, // none
+      { to: wallet.address, amountStroops: USDC(30) }, // only an expired one
+      { to: wallet.address, amountStroops: USDC(20), assetCode: "XLM", assetIssuer: null }, // wrong asset
+    ]);
+    const list = await unmatchedList();
+    expect(list).toHaveLength(4);
+    expect(list.every((p: { suggestedRequestId: string | null }) => p.suggestedRequestId === null)).toBe(true);
+  });
+
+  it("P15: with automatic matching on, a memo-less payment that exactly settles the only possible request is COUNTED", async () => {
+    await enable();
+    const req = await createRequest(merchant, wallet, { amount: "37.5" });
+    await createRequest(merchant, wallet, { amount: "12" });
+    const contract = "CAYPAQDKNWMHRATKU5DQ327VDHVRSIVK7UGVWT2A5SUZCUFTLUHXH2JA";
+    const [p] = await e.pay({ to: wallet.address, from: contract, amountStroops: 375_000_000n }); // plain G address, no memo
+    expect(await getPayment(p!.eventId)).toMatchObject({ outcome: "COUNTED", requestId: req.id, matchedBy: "amount", assignedManually: false });
+    expect(await getRequest(req.id)).toMatchObject({ status: "PAID", receivedStroops: 375_000_000n, paidTxHash: p?.txHash });
+    const detail = await merchant.agent.get(`/v1/payment-requests/${req.id}`);
+    expect(detail.body.payments).toMatchObject([{ matchedBy: "amount" }]);
+    expect(await unmatchedList()).toEqual([]);
+  });
+
+  it("P15: automatic matching also settles the remaining amount of a part-paid request", async () => {
+    await enable();
+    const req = await createRequest(merchant, wallet);
+    const [first] = await e.pay({ to: wallet.address, amountStroops: USDC(20), memoRaw: req.memo });
+    expect((await getPayment(first!.eventId)).matchedBy).toBe("memo");
+    await e.pay({ to: wallet.address, amountStroops: USDC(30) }); // the rest, without the memo
+    expect(await getRequest(req.id)).toMatchObject({ status: "PAID", receivedStroops: USDC(50) });
+  });
+
+  it("P15: automatic matching never guesses: two candidates, a different amount, another asset, an expired or another wallet's request all stay unmatched", async () => {
+    await enable();
+    const twinA = await createRequest(merchant, wallet, { amount: "20" });
+    const twinB = await createRequest(merchant, wallet, { amount: "20" });
+    const exact = await createRequest(merchant, wallet, { amount: "33" });
+    const expired = await createRequest(merchant, wallet, { amount: "44" });
+    await prisma.paymentRequest.update({ where: { id: expired.id }, data: { expiresAt: new Date(Date.now() - 60_000) } });
+    const second = await (await import("../helpers/harness")).addVerifiedWallet(merchant);
+    const elsewhere = await createRequest(merchant, second, { amount: "55" });
+    const made = await e.pay([
+      { to: wallet.address, amountStroops: USDC(20) }, // two requests ask for 20
+      { to: wallet.address, amountStroops: USDC(33) - 1n }, // one stroop short of 33
+      { to: wallet.address, amountStroops: USDC(33), assetCode: "XLM", assetIssuer: null }, // right number, wrong asset
+      { to: wallet.address, amountStroops: USDC(44) }, // only the expired request asks for 44
+      { to: wallet.address, amountStroops: USDC(55) }, // 55 is asked on the other wallet
+      { to: wallet.address, amountStroops: USDC(33), memoRaw: "not a paylink memo" }, // has a (wrong) memo: left alone
+    ]);
+    for (const p of made) expect((await getPayment(p.eventId)).requestId).toBeNull();
+    for (const r of [twinA, twinB, exact, expired, elsewhere]) expect((await getRequest(r.id)).receivedStroops).toBe(0n);
+    expect((await getRequest(exact.id)).status).toBe("PENDING");
+  });
+
+  it("P15: two identical memo-less payments for one request: the first settles it, the second stays unmatched", async () => {
+    await enable();
+    const req = await createRequest(merchant, wallet, { amount: "9" });
+    const [a, b] = await e.pay([
+      { to: wallet.address, amountStroops: USDC(9) },
+      { to: wallet.address, amountStroops: USDC(9) },
+    ]);
+    expect((await getPayment(a!.eventId)).outcome).toBe("COUNTED");
+    expect(await getPayment(b!.eventId)).toMatchObject({ outcome: "NO_MEMO", requestId: null });
+    expect(await getRequest(req.id)).toMatchObject({ status: "PAID", receivedStroops: USDC(9) });
+  });
+
+  it("P15: the setting is per merchant", async () => {
+    await enable();
+    const other = await setupMerchant(t, "No Auto");
+    const theirs = await createRequest(other.merchant, other.wallet, { amount: "7" });
+    const [p] = await e.pay({ to: other.wallet.address, amountStroops: USDC(7) });
+    expect((await getPayment(p!.eventId)).outcome).toBe("NO_MEMO");
+    expect((await getRequest(theirs.id)).status).toBe("PENDING");
+  });
+});
+
 describe("refund amounts", () => {
   it("a stranger's one-stroop payments on a public memo cannot raise refundOwed, but are still listed", async () => {
     const req = await createRequest(merchant, wallet);
