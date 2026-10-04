@@ -273,7 +273,7 @@ Notes:
 • Amount fields are BigInt; Prisma returns bigint, and the API serialises them as decimal strings.
 Request states and payment outcomes
 A request moves only through transitionRequest() and the allowed table in the Backend tab; the drawing shows the main paths.
-Not drawn, but allowed: PENDING straight to OVERPAID (one payment for more than asked); the merchant's Accept moving UNDERPAID, or EXPIRED with late payments, to PAID; and PENDING/UNDERPAID to NETWORK_RESET when testnet is wiped. PAID, OVERPAID, CANCELLED and NETWORK_RESET are final.
+Not drawn, but allowed: PENDING straight to OVERPAID (one payment for more than asked); the merchant's Accept moving UNDERPAID, EXPIRED with late payments, or CANCELLED with a payment that arrived after the cancel, to PAID; and PENDING/UNDERPAID to NETWORK_RESET when testnet is wiped. PAID, OVERPAID and NETWORK_RESET are final; CANCELLED is final unless the merchant accepts a payment that arrived after the cancel.
 Payment outcomes
 Every detected payment to a watched wallet gets exactly one outcome; only COUNTED changes a request's received amount. A request's refundOwed flag is true when it received more than asked, closed unpaid with money counted, or has any DUPLICATE, LATE, AFTER_CANCEL, AFTER_RESET or WRONG_ASSET payment.
 Outcome
@@ -290,7 +290,7 @@ Ledger time after expiry
 Refund owed, or Accept
 AFTER_CANCEL
 Request was cancelled
-Refund owed
+Refund owed, or Accept
 AFTER_RESET
 Request was closed by a testnet reset
 Refund owed

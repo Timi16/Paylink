@@ -120,6 +120,49 @@ describe("timing", () => {
     expect(detail.body.request).toMatchObject({ status: "CANCELLED", amountReceived: "0.0000000", refundOwed: true });
   });
 
+  it("T4: a customer who paid just as the merchant cancelled is not stranded: Accept makes it PAID", async () => {
+    const req = await createRequest(merchant, wallet);
+    // Nothing has arrived yet: a cancelled request cannot be accepted.
+    await merchant.agent.post(`/v1/payment-requests/${req.id}/cancel`).set("Origin", ORIGIN).send();
+    const early = await accept(req.id);
+    expect(early.status).toBe(409);
+    expect(early.body.error.code).toBe("INVALID_TRANSITION");
+
+    // The payment was already on its way; it lands after the cancel.
+    const [p] = await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: req.memo });
+    expect((await getPayment(p!.eventId)).outcome).toBe("AFTER_CANCEL");
+    const res = await accept(req.id);
+    expect(res.status).toBe(200);
+    expect(res.body.request).toMatchObject({ status: "PAID", amountReceived: "50.0000000", paidTxHash: p?.txHash, refundOwed: false });
+    expect((await getPayment(p!.eventId)).outcome).toBe("COUNTED");
+    const audit = await prisma.requestEvent.findMany({ where: { requestId: req.id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+    expect(audit.map((a) => [a.fromStatus, a.toStatus, a.reason, a.actor])).toEqual([
+      ["PENDING", "CANCELLED", "cancelled", "merchant"],
+      ["CANCELLED", "PAID", "accepted", "merchant"],
+    ]);
+    // PAID is final: it cannot be accepted or cancelled again, and a further payment is a duplicate.
+    expect((await accept(req.id)).status).toBe(409);
+    expect((await merchant.agent.post(`/v1/payment-requests/${req.id}/cancel`).set("Origin", ORIGIN).send()).status).toBe(409);
+    const [dup] = await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: req.memo });
+    expect((await getPayment(dup!.eventId)).outcome).toBe("DUPLICATE");
+    // The checkout link now shows the truth to the customer.
+    const pub = await merchant.agent.get(`/public/pay/${req.publicId}`);
+    expect(pub.body).toMatchObject({ status: "PAID", paidTxHash: p?.txHash });
+  });
+
+  it("T4: accepting a cancelled request counts what arrived, and flags the excess when it is more than was asked", async () => {
+    const req = await createRequest(merchant, wallet);
+    await merchant.agent.post(`/v1/payment-requests/${req.id}/cancel`).set("Origin", ORIGIN).send();
+    await e.pay({ to: wallet.address, amountStroops: USDC(40), memoRaw: req.memo });
+    await e.pay({ to: wallet.address, amountStroops: USDC(25), memoRaw: req.memo });
+    // A wrong-asset payment with the same memo is never swept in by Accept.
+    await e.pay({ to: wallet.address, amountStroops: USDC(9), memoRaw: req.memo, assetCode: "XLM", assetIssuer: null });
+    const res = await accept(req.id);
+    expect(res.body.request).toMatchObject({ status: "PAID", amount: "50.0000000", amountReceived: "65.0000000", refundOwed: true });
+    expect(await prisma.chainPayment.count({ where: { requestId: req.id, outcome: "COUNTED" } })).toBe(2);
+    expect(await prisma.chainPayment.count({ where: { requestId: req.id, outcome: "WRONG_ASSET" } })).toBe(1);
+  });
+
   it("T4: only a PENDING request can be cancelled", async () => {
     const req = await createRequest(merchant, wallet);
     await e.pay({ to: wallet.address, amountStroops: USDC(10), memoRaw: req.memo });

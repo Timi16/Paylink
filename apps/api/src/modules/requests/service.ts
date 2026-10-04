@@ -164,6 +164,8 @@ export function createRequestService(deps: AppDeps, wallets: WalletService) {
      * Merchant accepts what was paid as full payment:
      * - UNDERPAID: accept the partial amount.
      * - EXPIRED with at least one LATE payment: those payments become COUNTED.
+     * - CANCELLED with at least one AFTER_CANCEL payment (the customer paid as, or after, the
+     *   merchant cancelled): those payments become COUNTED.
      * Either way the request becomes PAID with the received amount recomputed.
      */
     async accept(auth: AuthContext, id: string): Promise<PaymentRequest> {
@@ -172,16 +174,23 @@ export function createRequestService(deps: AppDeps, wallets: WalletService) {
         const req = await lockRequestById(tx, id);
         if (!req || req.merchantId !== auth.merchantId) throw notFound("Payment request");
 
-        if (req.status === "EXPIRED") {
-          const late = await tx.chainPayment.findMany({
-            where: { requestId: id, outcome: "LATE" },
+        if (req.status === "EXPIRED" || req.status === "CANCELLED") {
+          // The payments that arrived after the request closed, and were set aside for it.
+          const outcome = req.status === "EXPIRED" ? "LATE" : "AFTER_CANCEL";
+          const setAside = await tx.chainPayment.findMany({
+            where: { requestId: id, outcome },
             select: { eventId: true },
           });
-          if (late.length === 0) {
-            throw new AppError("INVALID_TRANSITION", "An EXPIRED request can only be accepted once a late payment has arrived");
+          if (setAside.length === 0) {
+            throw new AppError(
+              "INVALID_TRANSITION",
+              req.status === "EXPIRED"
+                ? "An EXPIRED request can only be accepted once a late payment has arrived"
+                : "A CANCELLED request can only be accepted once a payment has arrived for it",
+            );
           }
           await tx.chainPayment.updateMany({
-            where: { eventId: { in: late.map((p) => p.eventId) } },
+            where: { eventId: { in: setAside.map((p) => p.eventId) } },
             data: { outcome: "COUNTED" },
           });
         } else if (req.status !== "UNDERPAID") {

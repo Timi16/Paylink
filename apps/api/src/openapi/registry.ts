@@ -125,7 +125,7 @@ export function buildOpenApiDocument(serverUrl?: string) {
   add({ method: "get", path: "/v1/payment-requests", summary: "List payment requests", tag: "Payment requests", auth: "any", query: s.ListRequestsQuery, success: { 200: s.RequestListResponse }, errors: [400] });
   add({ method: "get", path: "/v1/payment-requests/{id}", summary: "Request with every linked payment and its audit trail", tag: "Payment requests", auth: "any", params: s.IdParamsSchema, success: { 200: s.RequestDetailResponse }, errors: [404] });
   add({ method: "post", path: "/v1/payment-requests/{id}/cancel", summary: "Cancel a PENDING request", tag: "Payment requests", auth: "any", params: s.IdParamsSchema, success: { 200: s.RequestResponse }, errors: [403, 404, 409] });
-  add({ method: "post", path: "/v1/payment-requests/{id}/accept", summary: "Accept an UNDERPAID request, or an EXPIRED one with a late payment, as PAID", tag: "Payment requests", auth: "any", params: s.IdParamsSchema, success: { 200: s.RequestResponse }, errors: [403, 404, 409] });
+  add({ method: "post", path: "/v1/payment-requests/{id}/accept", summary: "Accept as PAID: an UNDERPAID request, an EXPIRED one with a late payment, or a CANCELLED one with a payment after the cancel", tag: "Payment requests", auth: "any", params: s.IdParamsSchema, success: { 200: s.RequestResponse }, errors: [403, 404, 409] });
 
   // Payments
   add({ method: "get", path: "/v1/payments", summary: "List detected payments (use unmatched=true for the Unmatched list)", tag: "Payments", auth: "any", query: s.ListPaymentsQuery, success: { 200: s.PaymentListResponse }, errors: [400] });

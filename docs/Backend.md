@@ -214,7 +214,7 @@ const ALLOWED: Record<RequestStatus, RequestStatus[]> = {
   EXPIRED:       ["PAID"],        // merchant Accept only
   PAID:          [],
   OVERPAID:      [],
-  CANCELLED:     [],
+  CANCELLED:     ["PAID"],        // merchant Accept only
   NETWORK_RESET: [],
 };
 
@@ -223,7 +223,7 @@ const ALLOWED: Record<RequestStatus, RequestStatus[]> = {
 export async function transitionRequest(tx, id, expected, to, reason, actor, paymentEventId?) {}
 Merchant actions
 • Cancel: PENDING only → CANCELLED.
-• Accept: from UNDERPAID or from EXPIRED when it has at least one LATE payment. Those LATE payments become COUNTED, receivedStroops is recomputed, and the request becomes PAID (actor merchant, reason accepted). The dashboard shows the amount accepted versus the amount asked.
+• Accept: from UNDERPAID, from EXPIRED when it has at least one LATE payment, or from CANCELLED when it has at least one AFTER_CANCEL payment (the customer paid as the merchant cancelled). Those LATE / AFTER_CANCEL payments become COUNTED, receivedStroops is recomputed, and the request becomes PAID (actor merchant, reason accepted). The dashboard shows the amount accepted versus the amount asked.
 • Assign unmatched: only for NO_MEMO, UNKNOWN_MEMO, MEMO_TYPE_MISMATCH payments, to a request on the same wallet and asset. Runs the same decision path from the status switch onward with assignedManually = true.
 Expiry, live status and wallet checks
 Three smaller services around the matcher: the sweeper that expires requests safely, the streams that make status changes appear instantly, and the checks that stop requests on wallets that can't receive.
@@ -309,7 +309,7 @@ POST /v1/payment-requests/:id/cancel
 { request }; 409 unless PENDING
 POST /v1/payment-requests/:id/accept
 —
-{ request }; 409 unless UNDERPAID, or EXPIRED with a LATE payment
+{ request }; 409 unless UNDERPAID, EXPIRED with a LATE payment, or CANCELLED with an AFTER_CANCEL payment
 Example response:
 {
   "request": {
@@ -501,7 +501,7 @@ Partial, then expiry
 EXPIRED with amountReceived shown, refund flag
 T4
 Payment after cancel
-AFTER_CANCEL
+AFTER_CANCEL, request stays CANCELLED with refundOwed; Accept → PAID
 T5
 Ingestion 3 min behind at expiry
 Not expired until the processed ledger passes expiresAt

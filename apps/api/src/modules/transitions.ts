@@ -11,7 +11,7 @@ export const ALLOWED: Record<RequestStatus, RequestStatus[]> = {
   EXPIRED: ["PAID"], // merchant Accept only
   PAID: [],
   OVERPAID: [],
-  CANCELLED: [],
+  CANCELLED: ["PAID"], // merchant Accept only, when a payment arrived after the cancel
   NETWORK_RESET: [],
 };
 

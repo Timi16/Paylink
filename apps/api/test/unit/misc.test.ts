@@ -57,8 +57,10 @@ describe("config/env", () => {
 });
 
 describe("transitions table", () => {
-  it("PAID, OVERPAID, CANCELLED and NETWORK_RESET are final", () => {
-    for (const s of ["PAID", "OVERPAID", "CANCELLED", "NETWORK_RESET"] as const) expect(ALLOWED[s]).toEqual([]);
+  it("PAID, OVERPAID and NETWORK_RESET are final; EXPIRED and CANCELLED can only become PAID (merchant Accept)", () => {
+    for (const s of ["PAID", "OVERPAID", "NETWORK_RESET"] as const) expect(ALLOWED[s]).toEqual([]);
+    expect(ALLOWED.EXPIRED).toEqual(["PAID"]);
+    expect(ALLOWED.CANCELLED).toEqual(["PAID"]);
   });
 
   it("allows only the documented moves", () => {
@@ -69,6 +71,8 @@ describe("transitions table", () => {
     expect(canTransition("EXPIRED", "PAID")).toBe(true);
     expect(canTransition("EXPIRED", "PENDING")).toBe(false);
     expect(canTransition("PAID", "EXPIRED")).toBe(false);
+    expect(canTransition("CANCELLED", "PAID")).toBe(true);
+    expect(canTransition("CANCELLED", "PENDING")).toBe(false);
   });
 
   it("T3: refund flag is set for overpayments and for closed requests that received money", () => {
