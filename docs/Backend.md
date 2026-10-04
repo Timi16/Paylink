@@ -170,6 +170,8 @@ Ingestion (same as Webhook)
 memo.ts
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // Crockford, no I L O U
 export function generateMemo(): string; // "PL" + 8 chars from crypto.randomInt
+export function memoToId(memo: string): bigint;        // the 8 Crockford chars as a 40-bit number
+export function idToMemo(raw: string): string | null;  // inverse; null unless 0 <= n < 2^40
 export function normalizeMemo(raw: string): string | null {
   // trim, uppercase, O->0, I/L->1, strip spaces and dashes;
   // return null unless it matches /^PL[0-9A-HJKMNP-TV-Z]{8}$/
@@ -178,12 +180,12 @@ matcher.process(tx, payment)
 insert ChainPayment ... ON CONFLICT (eventId) DO NOTHING; if no row -> return
 
 if memoType == "none"                     -> outcome NO_MEMO
-else if memoType != "text"                -> outcome MEMO_TYPE_MISMATCH
-else memo = normalizeMemo(raw); if null   -> outcome UNKNOWN_MEMO
-else req = SELECT ... FROM PaymentRequest WHERE memo = $1 FOR UPDATE
-  if !req                                 -> UNKNOWN_MEMO
+else if memoType == "hash"                -> outcome MEMO_TYPE_MISMATCH
+else memo = memoType == "text" ? normalizeMemo(raw) : idToMemo(raw)   // id = the memo's 40 bits as a number
+     req  = memo ? SELECT ... FROM PaymentRequest WHERE memo = $1 FOR UPDATE : null
+  if !req                                 -> text: UNKNOWN_MEMO; id: MEMO_TYPE_MISMATCH
   link payment.requestId = req.id         (every outcome below shows on the request)
-  if req.walletAddress != payment.to      -> WRONG_WALLET
+  if req.walletAddress != payment.to or req.walletId != the receiving wallet row -> WRONG_WALLET
   else if code != req.assetCode           -> WRONG_ASSET
   else if issuer != req.assetIssuer       -> WRONG_ISSUER
   else switch req.status:
@@ -233,7 +235,7 @@ Live status (API process)
 • Public GET /public/pay/:publicId/events: on connect, send the current snapshot; then push status events { status, amountReceived, amountRemaining, paidTxHash, expiresAt }; : ping every 25 s; close 5 s after a terminal status. Max 5 streams per IP.
 • Merchant GET /v1/stream (session): request.updated, payment.detected (including unmatched and rejected), wallet.updated.
 Wallet checks
-• On add: StrKey.isValidEd25519PublicKey; refuse S… secrets; WALLET_TAKEN if another merchant has verified it (even if they later removed it). An unverified claim by another merchant is taken over, so nobody can squat on an address they don't own.
+• On add: StrKey.isValidEd25519PublicKey; refuse S… secrets. One active wallet per address, decided under a per-address advisory lock: WALLET_TAKEN if another merchant has it verified and active, or removed but with open requests. An unverified claim by another merchant never blocks (no squatting). A verified wallet its owner removed, with no open requests, can be claimed by another merchant: they get a new Wallet row and must verify, so the old owner's requests and payments stay with the old owner.
 • Account + trustline check: Horizon GET /accounts/{address}. 404 → accountExists = false. Otherwise cache trustlines (code, issuer, limit, balance) in Wallet.trustlines with checkedAt.
 • Re-checked: on request create if checkedAt is older than 5 min, and on every checkout load (cached 30 s). Checkout data includes canReceive: boolean and a reason (ACCOUNT_NOT_FOUND, NO_TRUSTLINE, TRUSTLINE_LIMIT_TOO_LOW).
 • Limit headroom: limit − balance ≥ amountRemaining, else TRUSTLINE_LIMIT_TOO_LOW.
@@ -241,7 +243,7 @@ Wallet ownership verification
 1. POST /v1/wallets/:id/challenge → server stores a WalletChallenge and returns its message: PayLink wallet verification, merchant ID, a random nonce, an expiry 10 minutes out.
 2. The dashboard asks Freighter to sign that message for the wallet's address.
 3. POST /v1/wallets/:id/verify with the signature → server checks the challenge is unexpired and unused, verifies the signature against the address with Keypair, marks the challenge used and sets Wallet.verifiedAt.
-4. Day-3 spike: sign one message with the installed Freighter version and confirm the exact signing format (SEP-53 message prefix and hashing) that verify must use; record it in a code comment with a test vector.
+4. Signing format: SEP-53, i.e. ed25519 over SHA-256("Stellar Signed Message:\n" + message), confirmed against Freighter's source (encodeSep53Message) and recorded with a test vector in modules/wallets/signature.ts. The signature is accepted as base64 (Freighter API v4+), hex, raw bytes or a JSON Buffer (API v3); a pre-SEP-53 signature over the bare message is accepted too.
 REST API contract
 All routes return JSON with the shared error shape. "Session" = dashboard cookie; "Any" = session or API key; "Public" = no auth. Amounts go in and out as decimal strings, with stroops alongside in responses.
 Auth (session)
@@ -318,6 +320,8 @@ Example response:
     "amountStroops": "500000000",
     "amountReceived": "0.0000000",
     "memo": "PL7K2M9QXA",
+    "memoId": "264582209450",
+    "muxedAddress": "MABC…",
     "expiresAt": "2026-10-07T10:30:00Z",
     "paidTxHash": null,
     "description": "Order #1042"
@@ -338,7 +342,7 @@ Public (checkout)
 Method + path
 Success
 GET /public/pay/:publicId
-{ businessName, amount, amountReceived, amountRemaining, asset, wallet, memo, description, status, expiresAt, paidTxHash, canReceive, cannotReceiveReason, sep7Uri }
+{ businessName, amount, amountReceived, amountRemaining, asset, wallet, memo, memoId, muxedAddress, description, status, expiresAt, paidTxHash, canReceive, cannotReceiveReason, sep7Uri }
 GET /public/pay/:publicId/events
 SSE status stream
 Other
@@ -426,7 +430,7 @@ Memo lowercase, O for 0, spaces or dashes
 Normalised → COUNTED
 P5
 MEMO_ID or MEMO_HASH
-MEMO_TYPE_MISMATCH, unmatched list
+MEMO_TYPE_MISMATCH, unmatched list (unless a MEMO_ID equals a request's memoId: then it is matched)
 P6
 Right memo, wrong asset (XLM for a USDC request)
 WRONG_ASSET; request unchanged
@@ -456,10 +460,10 @@ Path payment (payer sends XLM, wallet gets USDC)
 Counted by USDC received
 P15
 Payer is a contract wallet (C address)
-Detected. Soroban transactions cannot carry a text memo, so it is NO_MEMO → assignable; if the transaction does carry a memo it is read from the envelope and matched normally
+Detected and matched normally. Soroban transactions cannot carry a text memo, so the payer sends to the request's muxedAddress (wallet + memoId) and the mux id identifies the request; sent to the plain G address with nothing, it is NO_MEMO → assignable
 P16
 Paid to the wallet's M-address
-Base wallet resolved; mux ID present → MEMO_TYPE_MISMATCH, assignable
+Base wallet resolved; mux ID equal to a request's memoId → matched; any other mux ID → MEMO_TYPE_MISMATCH, assignable
 P17
 Payment from the asset issuer (mint)
 Matched normally
@@ -520,8 +524,8 @@ M5
 Wallet removed with open requests
 Soft-deleted, still watched; requests keep their snapshot
 M6
-Wallet already verified by another merchant
-409 WALLET_TAKEN (an unverified claim is taken over)
+Wallet verified and active with another merchant (or removed with open requests)
+409 WALLET_TAKEN; an unverified claim is taken over; a removed wallet with no open requests can be claimed afresh
 M7
 Same Idempotency-Key twice / with a different body
 Same request (200) / 409

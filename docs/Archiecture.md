@@ -41,7 +41,7 @@ Why
 Trade-off accepted
 Memo (MEMO_TEXT) as the payment reference
 Free, standard, every wallet supports it; no per-payment accounts or reserves
-Customers can forget it → Unmatched list + manual assign
+Customers can forget it → Unmatched list + manual assign. Payers that cannot send a text memo (contract wallets, numeric-memo-only senders) use the same reference as a number: memoId, or the request's muxed address
 Memo unique across all of PayLink, forever
 A memo maps to exactly one request; lets us detect "right memo, wrong wallet"
 Slightly larger collision space to manage (retry on conflict)
@@ -129,7 +129,7 @@ model Wallet {
   id                String           @id @default(cuid())
   merchantId        String
   merchant          Merchant         @relation(fields: [merchantId], references: [id])
-  address           String           @unique // base G address; one merchant per wallet
+  address           String           // base G address; one ACTIVE wallet per address (wallet service, advisory lock); @@index([address])
   label             String?
   verifiedAt        DateTime?        // set after a valid signed challenge
   accountExists     Boolean          @default(false)
@@ -317,12 +317,12 @@ Accounts and access
 [ ] API keys: pl_test_ + 32 random bytes (base62), shown once, SHA-256 stored, revocable
 [ ] Tenant isolation: every repo function on merchant data requires merchantId; tests prove cross-merchant access returns 404
 Wallets
-[ ] One wallet, one merchant (Wallet.address @unique); an unverified claim never blocks the real owner
+[ ] One active wallet per address, one merchant at a time; an unverified claim never blocks the real owner; a re-claimed address gets a new row so history never moves between merchants
 [ ] Requests can only be created on a verified wallet: the merchant signs a server-issued challenge (10-minute expiry, single use) with Freighter's message signing; the API verifies the signature against the address
 [ ] Pasted S… secret keys are refused, never stored or logged
 Public checkout
 [ ] publicId is 12 random base62 characters (not guessable, not sequential)
-[ ] Public endpoints return only: merchant business name, amount, asset, wallet, memo, description, status, expiry, paid tx hash
+[ ] Public endpoints return only: merchant business name, amount, asset, wallet, memo (also as memoId and muxedAddress), description, status, expiry, paid tx hash
 [ ] Rate limits: 60/min per IP on public GETs; max 5 open SSE streams per IP
 [ ] Permanent "Stellar Testnet · no real money" banner; merchant name and wallet shown so payers can spot a fake
 [ ] frame-ancestors 'none' on the checkout so it can't be embedded in a look-alike page
