@@ -326,6 +326,28 @@ describe("merchant setup: wallets", () => {
     expect((await prisma.wallet.findFirstOrThrow({ where: { address: owner.publicKey(), deletedAt: null } })).merchantId).toBe(m.id);
   });
 
+  it("M5: a request cannot be created on a wallet that is removed and re-claimed mid-request", async () => {
+    const key = Keypair.random();
+    const wallet = await addVerifiedWallet(m, key);
+    const other = await signup(t, "Claimer");
+    for (let round = 0; round < 4; round++) {
+      // A creates a request while, at the same moment, removing the wallet; B then claims the address.
+      const [created] = await Promise.all([create(wallet.id), m.agent.delete(`/v1/wallets/${wallet.id}`).set("Origin", ORIGIN)]);
+      const claim = await other.agent.post("/v1/wallets").set("Origin", ORIGIN).send({ address: key.publicKey() });
+      // Either the request landed first (the address stays reserved for A), or the removal did (no request).
+      expect([`${created.status}/${claim.status}`], `round ${round}`).toContain(created.status === 201 ? "201/409" : "404/201");
+      const watched = await prisma.wallet.count({
+        where: { address: key.publicKey(), OR: [{ deletedAt: null }, { requests: { some: { status: { in: ["PENDING", "UNDERPAID"] } } } }] },
+      });
+      expect(watched).toBeLessThanOrEqual(1);
+      // Reset for the next round: close A's requests, drop B's claim, restore A's wallet.
+      await prisma.requestEvent.deleteMany();
+      await prisma.paymentRequest.deleteMany();
+      await prisma.wallet.deleteMany({ where: { merchantId: other.id } });
+      await post("/v1/wallets", { address: key.publicKey() });
+    }
+  });
+
   it("M6: payments recorded on an unverified claim stay with the merchant who made it", async () => {
     const key = Keypair.random();
     const first = await signup(t, "First");

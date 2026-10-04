@@ -165,8 +165,8 @@ Ingestion (same as Webhook)
 • to_muxed_id type → memoType: string → text, u64 → id, bytes → hash. If the day-2 spike shows a case where the memo is missing from the event, decode.ts falls back to getTransaction(txHash) and reads the envelope memo (cached per hash).
 • ingestion.ts loop: load cursor → check tip (reset if tip < cursor − 100) → backfill from Horizon if the cursor is older than RPC retention → fetch → keep payments to watched wallets → one transaction: matcher.process() for each + save cursor → NOTIFY → sleep 2 s (0 s if the page was full). Errors: backoff 1 s → 30 s, cursor never advanced.
 • watchedWallets.ts: every wallet where deletedAt is null, plus soft-deleted wallets that still have open requests; refreshed on NOTIFY wallets_changed and every 30 s.
-• Reconciliation (2 min, last 60 ledgers), watchdog (lag > 12 ledgers for 2 min → alert; stale heartbeat → exit so pm2 restarts the worker), network reset (cursor → tip, open requests → NETWORK_RESET, old event IDs renamed so post-reset IDs cannot collide, alert). A reset is acted on only after 3 consecutive polls see a tip more than 100 ledgers behind the cursor AND that tip is live (closed within 5 minutes); an old tip is a lagging RPC node and is treated as an RPC error. Pre-reset payments cannot be assigned to later requests.
-• A memo-less event whose transaction RPC cannot return yet fails the batch (retried) instead of being recorded as NO_MEMO, for up to 500 ledgers.
+• Reconciliation (2 min, last 60 ledgers), watchdog (lag > 12 ledgers for 2 min → alert; stale heartbeat → exit so pm2 restarts the worker), network reset (cursor → tip, open requests → NETWORK_RESET, old event IDs renamed so post-reset IDs cannot collide, alert). A reset is acted on only after 3 consecutive polls see a tip more than 100 ledgers behind the cursor AND that tip is live (closed within 5 minutes); an old tip is a lagging RPC node and is treated as an RPC error. Pre-reset payments cannot be assigned to later requests, cannot be swept in by Accept, and do not set refundOwed.
+• A memo-less event whose transaction RPC cannot return yet fails the batch (retried) instead of being recorded as NO_MEMO, for up to 24 ledgers (about 2 minutes).
 • Two sources, one payment: Horizon backfill covers only ledgers older than RPC retention, and a payment already recorded from the other source (same transaction, destination, asset, amount) is skipped.
 memo.ts
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // Crockford, no I L O U
@@ -232,7 +232,7 @@ Expiry sweeper (expirySweeper.ts, worker)
 • Select up to 100 requests with status PENDING or UNDERPAID and expiresAt < cutoff; for each, in its own transaction with FOR UPDATE, call transitionRequest(… → EXPIRED, reason "expired").
 • If ingestion lags, cutoff stays behind and nothing is expired early (T5).
 Live status (API process)
-• The API holds one pg connection that LISTENs on request_updated and payment_detected, and fans out to in-memory subscribers.
+• The API holds one pg connection that LISTENs on request_updated and payment_detected, and fans out to in-memory subscribers. Notifications are handled one at a time so a stream never receives an older status after a newer one; after the LISTEN connection reconnects, checkouts get their current status and dashboards get a resync event.
 • Streams have a maximum lifetime (public 60 min, merchant 15 min); EventSource reconnects and is re-authenticated, so a logged-out session loses its feed.
 • Public GET /public/pay/:publicId/events: on connect, send the current snapshot; then push status events { status, amountReceived, amountRemaining, paidTxHash, expiresAt }; : ping every 25 s; close 5 s after a terminal status. Max 5 streams per IP.
 • Merchant GET /v1/stream (session): request.updated, payment.detected (including unmatched and rejected), wallet.updated.

@@ -9,6 +9,7 @@ import { AppError, notFound } from "../../lib/errors";
 import { generatePublicId, sha256Hex } from "../../lib/ids";
 import { generateMemo, normalizeMemo } from "../../lib/memo";
 import type { AuthContext } from "../../middleware/auth";
+import { RESET_EVENT_PREFIX } from "../../engine/networkReset";
 import { lockRequestById, transitionRequest } from "../transitions";
 import { checkCanReceive, RECEIVE_ERROR_MESSAGES } from "../wallets/capability";
 import * as walletRepo from "../wallets/repo";
@@ -88,7 +89,14 @@ export function createRequestService(deps: AppDeps, wallets: WalletService) {
       const expiresAt = new Date(Date.now() + body.expiresInMinutes * 60_000);
       for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
         try {
-          const request = await repo.createRequest(prisma, merchantId, {
+          // Same per-address lock as adding a wallet: the wallet cannot be removed and the
+          // address claimed by someone else between this check and the insert.
+          const walletId = wallet.id;
+          const address = wallet.address;
+          const request = await prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${address}))`;
+            if (!(await walletRepo.findWallet(tx, merchantId, walletId))) throw notFound("Wallet");
+            return repo.createRequest(tx, merchantId, {
             publicId: generatePublicId(),
             walletId: wallet.id,
             // Snapshot: later wallet edits can never change what this request expects.
@@ -103,7 +111,8 @@ export function createRequestService(deps: AppDeps, wallets: WalletService) {
             expiresAt,
             idempotencyKey: idempotencyKey ?? null,
             idempotencyHash: idempotencyKey ? bodyHash : null,
-            createdVia: auth.via === "apiKey" ? "api" : "dashboard",
+              createdVia: auth.via === "apiKey" ? "api" : "dashboard",
+            });
           });
           return { request, created: true };
         } catch (err) {
@@ -177,8 +186,9 @@ export function createRequestService(deps: AppDeps, wallets: WalletService) {
         if (req.status === "EXPIRED" || req.status === "CANCELLED") {
           // The payments that arrived after the request closed, and were set aside for it.
           const outcome = req.status === "EXPIRED" ? "LATE" : "AFTER_CANCEL";
+          // Payments from before a testnet reset no longer exist on the network: never counted.
           const setAside = await tx.chainPayment.findMany({
-            where: { requestId: id, outcome },
+            where: { requestId: id, outcome, NOT: { eventId: { startsWith: RESET_EVENT_PREFIX } } },
             select: { eventId: true },
           });
           if (setAside.length === 0) {

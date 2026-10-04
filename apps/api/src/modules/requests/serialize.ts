@@ -50,7 +50,8 @@ export function refundOwed(
 export async function requestsWithRefundablePayments(db: Db, requestIds: string[]): Promise<Set<string>> {
   if (requestIds.length === 0) return new Set();
   const rows = await db.chainPayment.findMany({
-    where: { requestId: { in: requestIds }, outcome: { in: REFUNDABLE_OUTCOMES } },
+    // Money from before a testnet reset is gone with the old network: nothing to refund.
+    where: { requestId: { in: requestIds }, outcome: { in: REFUNDABLE_OUTCOMES }, NOT: { eventId: { startsWith: "reset-" } } },
     select: { requestId: true },
     distinct: ["requestId"],
   });

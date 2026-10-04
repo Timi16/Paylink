@@ -326,6 +326,20 @@ describe("system", () => {
     expect((await getRequest(fresh.id)).status).toBe("PENDING");
   });
 
+  it("S5: a late payment from before a reset cannot be accepted, and no refund is flagged for it", async () => {
+    const req = await createRequest(merchant, wallet);
+    await prisma.paymentRequest.update({ where: { id: req.id }, data: { expiresAt: ago(5 * MIN) } });
+    await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: req.memo }, ago(1 * MIN)); // LATE -> EXPIRED
+    expect((await merchant.agent.get(`/v1/payment-requests/${req.id}`)).body.request).toMatchObject({ status: "EXPIRED", refundOwed: true });
+    e.source.reset(10);
+    for (let i = 0; i < 3; i++) await e.ingestion.tick();
+    const res = await merchant.agent.post(`/v1/payment-requests/${req.id}/accept`).set("Origin", ORIGIN);
+    expect(res.status).toBe(409);
+    const after = await merchant.agent.get(`/v1/payment-requests/${req.id}`);
+    expect(after.body.request).toMatchObject({ status: "EXPIRED", amountReceived: "0.0000000", refundOwed: false });
+    expect((await merchant.agent.get("/v1/payment-requests?status=EXPIRED")).body.data[0].refundOwed).toBe(false);
+  });
+
   it("S4: a long Horizon backfill keeps the worker heartbeat alive, so the watchdog does not kill it mid-way", async () => {
     e.source.ledger = 6000;
     e.source.oldestLedger = 5000;

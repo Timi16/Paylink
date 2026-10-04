@@ -24,8 +24,12 @@ const FILTERS: rpc.Api.EventFilter[] = [
   },
 ];
 
-/** About 40 minutes of ledgers: how long a missing transaction blocks its batch before we move on. */
-const TX_LOOKUP_RETRY_LEDGERS = 500;
+/**
+ * About 2 minutes of ledgers: how long a missing transaction blocks its batch before we move
+ * on. A node that has the event but not yet the transaction catches up in seconds; holding
+ * every merchant's ingestion (and the expiry sweeper) for longer would cost more than it saves.
+ */
+const TX_LOOKUP_RETRY_LEDGERS = 24;
 
 interface TxInfo {
   outerHash: string;
@@ -65,7 +69,9 @@ export class RpcEventSource implements StellarSource {
     ]);
     return {
       ledger: latest.sequence,
-      closedAt: epochToDate(latest.closeTime) ?? new Date(),
+      // No close time means we cannot tell the tip is live: report it as old, so the
+      // network-reset check treats it as a stale node rather than a fresh chain.
+      closedAt: epochToDate(latest.closeTime) ?? new Date(0),
       oldestLedger: health.oldestLedger,
     };
   }

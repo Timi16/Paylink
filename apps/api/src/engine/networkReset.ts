@@ -8,6 +8,9 @@ import type { ChainTip } from "./sources/StellarSource";
 /** The tip moved backwards by more than this many ledgers: testnet was wiped. */
 export const RESET_THRESHOLD_LEDGERS = 100;
 
+/** Every pre-reset ChainPayment.eventId is renamed to start with this. */
+export const RESET_EVENT_PREFIX = "reset-";
+
 export function isNetworkReset(tipLedger: number, cursorLedger: number): boolean {
   return tipLedger < cursorLedger - RESET_THRESHOLD_LEDGERS;
 }
@@ -40,7 +43,7 @@ export async function handleNetworkReset(
       }
       // Ledger numbers restart after a reset, so new event ids could collide with old ones
       // and be dropped as duplicates. Move the old ids out of the way.
-      const prefix = `reset-${now.getTime()}-`;
+      const prefix = `${RESET_EVENT_PREFIX}${now.getTime()}-`;
       await tx.$executeRaw`
         UPDATE "RequestEvent" SET "paymentEventId" = ${prefix} || "paymentEventId"
         WHERE "paymentEventId" IS NOT NULL AND "paymentEventId" NOT LIKE 'reset-%'`;

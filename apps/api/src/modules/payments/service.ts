@@ -3,14 +3,12 @@ import { UNMATCHED_OUTCOMES, type ListPaymentsQuery, type PaymentOutcome } from 
 import { CHANNELS, notify } from "../../db/notify";
 import type { AppDeps } from "../../deps";
 import { applyToRequest, paymentFacts, targetMismatch } from "../../engine/matcher";
+import { RESET_EVENT_PREFIX } from "../../engine/networkReset";
 import { decodeCursor, encodeCursor } from "../../lib/cursor";
 import { AppError, notFound } from "../../lib/errors";
 import * as requestRepo from "../requests/repo";
 import { lockRequestById } from "../transitions";
 import * as repo from "./repo";
-
-/** networkReset.ts renames every pre-reset event id to start with this. */
-const RESET_EVENT_PREFIX = "reset-";
 
 const isUnmatched = (outcome: PaymentOutcome): boolean =>
   (UNMATCHED_OUTCOMES as readonly PaymentOutcome[]).includes(outcome);

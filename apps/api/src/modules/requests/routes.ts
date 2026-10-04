@@ -30,7 +30,7 @@ export function requestRoutes(service: RequestService, prisma: PrismaClient): Ro
     const { id } = parse(IdParamsSchema, req.params);
     const { request, payments, events } = await service.detail(authOf(req).merchantId, id);
     res.json({
-      request: serializeRequest(request, payments.some((p) => REFUNDABLE_OUTCOMES.includes(p.outcome))),
+      request: serializeRequest(request, payments.some((p) => REFUNDABLE_OUTCOMES.includes(p.outcome) && !p.eventId.startsWith("reset-"))),
       payments: payments.map((p) => serializePayment(p, { showWalletId: p.walletId === request.walletId })),
       events: events.map(serializeEvent),
     });
