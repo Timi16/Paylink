@@ -237,15 +237,41 @@ describe("merchant setup: wallets", () => {
     expect(after.status).toBe(409);
   });
 
-  it("M6: two merchants adding the same wallet at once: exactly one wins", async () => {
+  it("M6: an unverified claim cannot squat on an address: the next merchant takes it, and verification settles it", async () => {
+    const owner = Keypair.random();
+    const squatter = await signup(t, "Squatter");
+    const squat = await squatter.agent.post("/v1/wallets").set("Origin", ORIGIN).send({ address: owner.publicKey() });
+    expect(squat.status).toBe(201);
+    const staleChallenge = await squatter.agent.post(`/v1/wallets/${squat.body.wallet.id}/challenge`).set("Origin", ORIGIN);
+
+    // The real owner can still add and verify it.
+    const mine = await addVerifiedWallet(m, owner);
+    expect((await squatter.agent.get("/v1/wallets")).body.data).toEqual([]);
+    expect(await prisma.wallet.count({ where: { address: owner.publicKey() } })).toBe(1);
+    // The squatter's old challenge is useless, even with a valid signature.
+    const signature = Buffer.from(owner.signMessage(staleChallenge.body.message)).toString("base64");
+    const replay = await squatter.agent.post(`/v1/wallets/${mine.id}/verify`).set("Origin", ORIGIN).send({ challengeId: staleChallenge.body.challengeId, signature });
+    expect(replay.status).toBe(404);
+    // Once verified it cannot be taken.
+    const again = await squatter.agent.post("/v1/wallets").set("Origin", ORIGIN).send({ address: owner.publicKey() });
+    expect(again.status).toBe(409);
+    expect((await prisma.wallet.findFirstOrThrow({ where: { address: owner.publicKey() } })).merchantId).toBe(m.id);
+  });
+
+  it("M6: two merchants adding the same wallet at once leave exactly one row with one owner", async () => {
     const other = await signup(t, "Other");
     const address = Keypair.random().publicKey();
     const [a, b] = await Promise.all([
       post("/v1/wallets", { address }),
       other.agent.post("/v1/wallets").set("Origin", ORIGIN).send({ address }),
     ]);
-    expect([a.status, b.status].sort()).toEqual([201, 409]);
+    expect([201, 409]).toContain(a.status);
+    expect([201, 409]).toContain(b.status);
+    expect([a.status, b.status]).toContain(201);
     expect(await prisma.wallet.count({ where: { address } })).toBe(1);
+    const mine = (await m.agent.get("/v1/wallets")).body.data.length;
+    const theirs = (await other.agent.get("/v1/wallets")).body.data.length;
+    expect(mine + theirs).toBe(1);
   });
 });
 

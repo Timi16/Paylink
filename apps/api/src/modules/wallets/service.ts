@@ -118,9 +118,15 @@ export function createWalletService(deps: AppDeps) {
       assertWalletAddress(input.address);
       const existing = await repo.findWalletByAddress(prisma, input.address);
       let wallet: Wallet;
-      if (existing) {
-        if (existing.merchantId !== merchantId || existing.deletedAt === null) {
-          // Same message either way: don't reveal who owns it.
+      if (existing && existing.merchantId !== merchantId) {
+        // Another merchant registered this address. If they never proved ownership, the
+        // claim is worthless: let this merchant take it, so nobody can squat on an address
+        // they don't own. A verified wallet (even a removed one) stays with its owner.
+        const taken = !existing.verifiedAt && (await repo.takeOverUnverified(prisma, merchantId, existing.id, input.label ?? null));
+        if (!taken) throw new AppError("WALLET_TAKEN", "This wallet is already registered");
+        wallet = (await repo.findWallet(prisma, merchantId, existing.id)) ?? existing;
+      } else if (existing) {
+        if (existing.deletedAt === null) {
           throw new AppError("WALLET_TAKEN", "This wallet is already registered");
         }
         // The same merchant re-adding a wallet they removed: restore it. Ownership was
@@ -194,13 +200,17 @@ export function createWalletService(deps: AppDeps) {
         if (used.count === 0) {
           throw new AppError("CHALLENGE_EXPIRED", "This challenge has expired or was already used. Request a new one.");
         }
-        return repo.updateWallet(tx, merchantId, wallet.id, {
+        const updated = await repo.updateWallet(tx, merchantId, wallet.id, {
           verifiedAt: wallet.verifiedAt ?? new Date(),
         });
+        if (!updated) throw notFound("Wallet"); // rolls the challenge back too
+        return updated;
       });
-      const result = verified ?? wallet;
-      await announce(result);
-      return result;
+      // Null means the wallet changed hands mid-verification; the transaction rolled nothing
+      // forward for this merchant.
+      if (!verified) throw notFound("Wallet");
+      await announce(verified);
+      return verified;
     },
 
     /** Soft delete. The worker keeps watching it until its open requests close. */

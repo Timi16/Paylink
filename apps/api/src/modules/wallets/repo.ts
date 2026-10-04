@@ -36,3 +36,20 @@ export async function updateWallet(
   await db.wallet.updateMany({ where: { id, merchantId }, data });
   return db.wallet.findFirst({ where: { id, merchantId } });
 }
+
+/**
+ * Moves an UNVERIFIED wallet with no requests to another merchant. Conditional on it still
+ * being unverified, so it can never race a successful verification. Returns false if it lost.
+ */
+export async function takeOverUnverified(
+  db: Db,
+  merchantId: string,
+  walletId: string,
+  label: string | null,
+): Promise<boolean> {
+  const moved = await db.wallet.updateMany({
+    where: { id: walletId, verifiedAt: null, merchantId: { not: merchantId }, requests: { none: {} } },
+    data: { merchantId, label, deletedAt: null, createdAt: new Date() },
+  });
+  return moved.count === 1;
+}
