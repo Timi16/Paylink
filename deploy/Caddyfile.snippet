@@ -1,0 +1,8 @@
+# Add to the shared Caddyfile. The API trusts exactly one proxy hop (this one).
+api.paylink.{$DOMAIN} {
+	encode gzip
+	reverse_proxy 127.0.0.1:4100 {
+		# Server-Sent Events: do not buffer.
+		flush_interval -1
+	}
+}
