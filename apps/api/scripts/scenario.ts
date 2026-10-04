@@ -184,6 +184,12 @@ async function main(): Promise<void> {
   const payer = Keypair.random();
   const wallet = walletKey.publicKey();
 
+  // Make sure API_URL really is PayLink before sending it anything.
+  const health = await fetch(`${API}/health`).then((r) => r.json() as Promise<{ network?: string; db?: string }>).catch(() => null);
+  if (health?.network !== "testnet" || health.db !== "up") {
+    throw new Error(`${API} is not a healthy PayLink API (check PORT / API_URL, and that the API is running)`);
+  }
+
   console.log("Funding accounts with Friendbot…");
   for (const k of [keys.issuer, keys.fakeIssuer, walletKey, otherWalletKey, payer]) await friendbot(k.publicKey());
   console.log("Trustlines and balances…");
