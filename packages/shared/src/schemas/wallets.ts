@@ -9,8 +9,20 @@ export const AddWalletBody = z
   .strict();
 export type AddWalletBody = z.infer<typeof AddWalletBody>;
 
+const SignatureBytes = z.array(z.number().int().min(0).max(255)).length(64);
+
+/**
+ * Freighter's signMessage returns `signedMessage` as a base64 string (API v4+) or as a
+ * Buffer (v3), which JSON turns into { type: "Buffer", data: [...] }. All are accepted, plus hex.
+ */
+export const SignatureSchema = z.union([
+  z.string().trim().min(1).max(256),
+  SignatureBytes,
+  z.object({ type: z.literal("Buffer"), data: SignatureBytes }).strict(),
+]);
+
 export const VerifyWalletBody = z
-  .object({ challengeId: IdSchema, signature: z.string().trim().min(1).max(256) })
+  .object({ challengeId: IdSchema, signature: SignatureSchema })
   .strict();
 export type VerifyWalletBody = z.infer<typeof VerifyWalletBody>;
 

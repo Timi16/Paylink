@@ -88,12 +88,14 @@ describe("wallet signature (SEP-53)", () => {
     expect(verifyWalletSignature(address, message, hex)).toBe(true);
   });
 
-  it("rejects a different message, a different signer, a raw (non SEP-53) signature and junk", () => {
+  it("rejects a different message, a different signer and junk", () => {
     const { address, message, signature } = SEP53_VECTOR;
     expect(verifyWalletSignature(address, message + "!", signature)).toBe(false);
     expect(verifyWalletSignature(Keypair.random().publicKey(), message, signature)).toBe(false);
+    // A pre-SEP-53 wallet signs the bare message: accepted, but only for the exact message.
     const raw = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 1)).sign(Buffer.from(message));
-    expect(verifyWalletSignature(address, message, Buffer.from(raw).toString("base64"))).toBe(false);
+    expect(verifyWalletSignature(address, message, Buffer.from(raw).toString("base64"))).toBe(true);
+    expect(verifyWalletSignature(address, message + "!", Buffer.from(raw).toString("base64"))).toBe(false);
     expect(verifyWalletSignature(address, message, "not a signature")).toBe(false);
     expect(decodeSignature("AAAA")).toBeNull();
   });
