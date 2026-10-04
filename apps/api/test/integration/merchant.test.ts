@@ -312,6 +312,9 @@ describe("merchant setup: wallets", () => {
     // The real owner can still add and verify it.
     const mine = await addVerifiedWallet(m, owner);
     expect((await squatter.agent.get("/v1/wallets")).body.data).toEqual([]);
+    // The claim was retired, not handed over: a wallet row never changes merchant.
+    expect(mine.id).not.toBe(squat.body.wallet.id);
+    expect((await prisma.wallet.findUniqueOrThrow({ where: { id: squat.body.wallet.id } })).merchantId).toBe(squatter.id);
     expect(await prisma.wallet.count({ where: { address: owner.publicKey(), deletedAt: null } })).toBe(1);
     // The squatter's old challenge is useless, even with a valid signature.
     const signature = Buffer.from(owner.signMessage(staleChallenge.body.message)).toString("base64");
@@ -321,6 +324,45 @@ describe("merchant setup: wallets", () => {
     const again = await squatter.agent.post("/v1/wallets").set("Origin", ORIGIN).send({ address: owner.publicKey() });
     expect(again.status).toBe(409);
     expect((await prisma.wallet.findFirstOrThrow({ where: { address: owner.publicKey(), deletedAt: null } })).merchantId).toBe(m.id);
+  });
+
+  it("M6: payments recorded on an unverified claim stay with the merchant who made it", async () => {
+    const key = Keypair.random();
+    const first = await signup(t, "First");
+    const claim = await first.agent.post("/v1/wallets").set("Origin", ORIGIN).send({ address: key.publicKey() });
+    const e = makeEngine();
+    await e.ingestion.tick();
+    await e.pay({ to: key.publicKey(), amountStroops: USDC(3) }); // unverified wallets are watched too
+    expect((await first.agent.get("/v1/payments")).body.data).toHaveLength(1);
+
+    const mine = await addVerifiedWallet(m, key);
+    expect((await m.agent.get("/v1/payments")).body.data).toEqual([]);
+    expect((await first.agent.get("/v1/payments")).body.data).toMatchObject([{ walletId: claim.body.wallet.id }]);
+    await e.pay({ to: key.publicKey(), amountStroops: USDC(4) });
+    expect((await m.agent.get("/v1/payments")).body.data).toMatchObject([{ walletId: mine.id, amount: "4.0000000" }]);
+    expect((await first.agent.get("/v1/payments")).body.data).toHaveLength(1);
+  });
+
+  it("M6: two merchants racing to add and verify the same address: exactly one ends up holding it", async () => {
+    const key = Keypair.random();
+    const other = await signup(t, "Racer");
+    for (let round = 0; round < 5; round++) {
+      await prisma.walletChallenge.deleteMany();
+      await prisma.wallet.deleteMany({ where: { address: key.publicKey() } });
+      const mine = await post("/v1/wallets", { address: key.publicKey() });
+      const challenge = await post(`/v1/wallets/${mine.body.wallet.id}/challenge`);
+      const signature = Buffer.from(key.signMessage(challenge.body.message)).toString("base64");
+      // A verifies while B tries to claim the still-unverified address.
+      const [verify, claim] = await Promise.all([
+        post(`/v1/wallets/${mine.body.wallet.id}/verify`, { challengeId: challenge.body.challengeId, signature }),
+        other.agent.post("/v1/wallets").set("Origin", ORIGIN).send({ address: key.publicKey() }),
+      ]);
+      const active = await prisma.wallet.findMany({ where: { address: key.publicKey(), deletedAt: null } });
+      expect(active, `round ${round}: verify ${verify.status}, claim ${claim.status}`).toHaveLength(1);
+      // Either A verified and B was refused, or B took the unverified claim and A's verify found nothing.
+      expect([`${verify.status}/${claim.status}`]).toContain(active[0]!.merchantId === m.id ? "200/409" : "404/201");
+      expect(active[0]!.verifiedAt !== null).toBe(active[0]!.merchantId === m.id);
+    }
   });
 
   it("M6: two merchants adding the same wallet at once leave exactly one row with one owner", async () => {
@@ -451,6 +493,11 @@ describe("merchant setup: creating requests", () => {
     expect((await create(wallet.id, { metadata: "text" })).status).toBe(400);
     expect((await create("no-such-wallet")).status).toBe(404);
     expect((await create("../../etc")).status).toBe(400);
+    // NUL cannot be stored by Postgres: a 400, not a 500, wherever it appears.
+    expect((await create(wallet.id, { description: "a\u0000b" })).status).toBe(400);
+    expect((await create(wallet.id, { metadata: { note: "x\u0000" } })).status).toBe(400);
+    expect((await m.agent.get("/v1/payment-requests?q=%00")).status).toBe(400);
+    expect((await post("/v1/wallets", { address: Keypair.random().publicKey(), label: "a\u0000" })).status).toBe(400);
     const malformed = await m.agent.post("/v1/payment-requests").set("Origin", ORIGIN).set("Content-Type", "application/json").send('{"walletId": ');
     expect(malformed.status).toBe(400);
     expect(malformed.body.error.code).toBe("VALIDATION_FAILED");

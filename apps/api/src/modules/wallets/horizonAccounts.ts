@@ -42,7 +42,14 @@ export class HorizonAccountLoader implements AccountLoader {
         retryAfter: 10,
       });
     }
-    const body = (await res.json()) as { balances?: HorizonBalance[] };
+    let body: { balances?: HorizonBalance[] };
+    try {
+      body = (await res.json()) as { balances?: HorizonBalance[] };
+    } catch {
+      throw new AppError("HORIZON_UNAVAILABLE", "Could not reach Stellar to check this wallet", {
+        retryAfter: 10,
+      });
+    }
     const trustlines: Trustline[] = [];
     for (const b of body.balances ?? []) {
       if (!b.asset_code || !b.asset_issuer) continue; // native and pool shares

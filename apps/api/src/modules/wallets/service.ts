@@ -150,13 +150,9 @@ export function createWalletService(deps: AppDeps) {
           });
           return restored ?? mine;
         }
-        const [first, ...rest] = squatters;
-        for (const s of rest) await repo.retireUnverified(tx, s.id);
-        if (first && (await repo.takeOverUnverified(tx, merchantId, first.id, label))) {
-          const moved = await repo.findWallet(tx, merchantId, first.id);
-          if (moved) return moved;
-        }
-        if (first) await repo.retireUnverified(tx, first.id);
+        // Unverified claims are retired, never transferred: a wallet row (and the payments
+        // recorded on it) stays with the merchant who created it.
+        for (const s of squatters) await repo.retireUnverified(tx, s.id);
         return repo.createWallet(tx, merchantId, { address: input.address, label });
       });
       // Best effort: the wallet is still added if Horizon is unreachable right now.
@@ -204,6 +200,11 @@ export function createWalletService(deps: AppDeps) {
         throw new AppError("INVALID_SIGNATURE", "The signature does not match this wallet");
       }
       const verified = await prisma.$transaction(async (tx) => {
+        // Same per-address lock as add(): a verification and a competing claim on the same
+        // address are strictly ordered, so two merchants can never both end up holding it.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${wallet.address}))`;
+        // Another merchant may have claimed the address while this one was unverified.
+        if (!(await repo.findWallet(tx, merchantId, wallet.id))) throw notFound("Wallet");
         // Single use, enforced atomically: two concurrent verifies cannot both consume it.
         const used = await tx.walletChallenge.updateMany({
           where: { id: challenge.id, usedAt: null, expiresAt: { gt: new Date() } },
