@@ -339,6 +339,43 @@ describe("matching", () => {
   });
 });
 
+describe("refund amounts", () => {
+  it("a stranger's one-stroop payments on a public memo cannot raise refundOwed, but are still listed", async () => {
+    const req = await createRequest(merchant, wallet);
+    await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: req.memo }); // the real payment
+    // Griefing: dust in the wrong asset, and dust on the already-paid request.
+    await e.pay({ to: wallet.address, amountStroops: 1n, memoRaw: req.memo, assetCode: "XLM", assetIssuer: null });
+    await e.pay({ to: wallet.address, amountStroops: 1n, memoRaw: req.memo });
+    const dust = (await merchant.agent.get(`/v1/payment-requests/${req.id}`)).body.request;
+    expect(dust.refundOwed).toBe(false);
+    expect(dust.refundDue).toEqual(
+      expect.arrayContaining([
+        { asset: { code: "XLM", issuer: null }, amount: "0.0000001", amountStroops: "1" },
+        { asset: { code: "USDC", issuer: req.asset.issuer }, amount: "0.0000001", amountStroops: "1" },
+      ]),
+    );
+    expect((await merchant.agent.get("/v1/payment-requests")).body.data[0]).toMatchObject({ refundOwed: false });
+
+    // A real duplicate does raise it, with the exact amount to send back.
+    await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: req.memo });
+    const real = (await merchant.agent.get(`/v1/payment-requests/${req.id}`)).body.request;
+    expect(real.refundOwed).toBe(true);
+    expect(real.refundDue).toEqual(
+      expect.arrayContaining([{ asset: { code: "USDC", issuer: req.asset.issuer }, amount: "50.0000001", amountStroops: "500000001" }]),
+    );
+    const listed = (await merchant.agent.get("/v1/payment-requests")).body.data[0];
+    expect(listed.refundDue).toEqual(real.refundDue);
+  });
+
+  it("an overpayment lists the excess, and a new request owes nothing", async () => {
+    const fresh = await createRequest(merchant, wallet);
+    expect(fresh).toMatchObject({ refundOwed: false, refundDue: [] });
+    await e.pay({ to: wallet.address, amountStroops: USDC(62), memoRaw: fresh.memo });
+    const over = (await merchant.agent.get(`/v1/payment-requests/${fresh.id}`)).body.request;
+    expect(over).toMatchObject({ status: "OVERPAID", refundOwed: true, refundDue: [{ amount: "12.0000000", asset: { code: "USDC" } }] });
+  });
+});
+
 describe("manual assign", () => {
   it("only unmatched payments on the same wallet and asset can be assigned", async () => {
     const req = await createRequest(merchant, wallet);

@@ -33,42 +33,77 @@ export function remainingStroops(r: Pick<PaymentRequest, "amountStroops" | "rece
 export const REFUNDABLE_OUTCOMES: PaymentOutcome[] = ["DUPLICATE", "LATE", "AFTER_CANCEL", "AFTER_RESET", "WRONG_ASSET"];
 
 /**
- * Funds arrived that the merchant should return: more than was asked, money counted on a
- * request that then closed unpaid, or (`hasRefundablePayment`) any linked payment that was
- * not applied: a duplicate, a late one, one after cancel or reset, or the wrong asset.
+ * Below this (0.01 of the asset) an amount is dust: it is still listed in `refundDue`, but
+ * it does not raise the `refundOwed` flag. The memo is public, so anyone can attach a
+ * one-stroop payment to a request; the flag must not be something a stranger can set for free.
  */
-export function refundOwed(
-  r: Pick<PaymentRequest, "status" | "receivedStroops" | "amountStroops">,
-  hasRefundablePayment = false,
-): boolean {
-  if (hasRefundablePayment || r.receivedStroops > r.amountStroops) return true;
+export const REFUND_DUST_STROOPS = 100_000n;
+
+export interface RefundablePayment {
+  eventId: string;
+  outcome: PaymentOutcome;
+  assetCode: string;
+  assetIssuer: string | null;
+  amountStroops: bigint;
+}
+
+export interface RefundLine {
+  asset: { code: string; issuer: string | null };
+  amountStroops: bigint;
+}
+
+/**
+ * What the merchant should send back for a request, per asset:
+ * - anything received beyond the amount asked (overpaid, or accepted for more than asked);
+ * - everything counted on a request that then closed unpaid;
+ * - every linked payment that was not applied: a duplicate, a late one, one after cancel
+ *   or reset, or one in the wrong asset.
+ * Payments from before a testnet reset are excluded: that money no longer exists.
+ */
+export function refundDue(
+  r: Pick<PaymentRequest, "status" | "receivedStroops" | "amountStroops" | "assetCode" | "assetIssuer">,
+  payments: RefundablePayment[] = [],
+): RefundLine[] {
+  const totals = new Map<string, RefundLine>();
+  const add = (code: string, issuer: string | null, amount: bigint) => {
+    if (amount <= 0n) return;
+    const key = `${code}|${issuer ?? ""}`;
+    const line = totals.get(key) ?? { asset: { code, issuer }, amountStroops: 0n };
+    line.amountStroops += amount;
+    totals.set(key, line);
+  };
   const closedUnpaid = r.status === "EXPIRED" || r.status === "CANCELLED" || r.status === "NETWORK_RESET";
-  return closedUnpaid && r.receivedStroops > 0n;
+  add(r.assetCode, r.assetIssuer, closedUnpaid ? r.receivedStroops : r.receivedStroops - r.amountStroops);
+  for (const p of payments) {
+    if (!REFUNDABLE_OUTCOMES.includes(p.outcome) || p.eventId.startsWith("reset-")) continue;
+    add(p.assetCode, p.assetIssuer, p.amountStroops);
+  }
+  return [...totals.values()];
 }
 
-/** Ids, among `requestIds`, of requests that have a payment that should be refunded. */
-export async function requestsWithRefundablePayments(db: Db, requestIds: string[]): Promise<Set<string>> {
-  if (requestIds.length === 0) return new Set();
-  const rows = await db.chainPayment.findMany({
-    // Money from before a testnet reset is gone with the old network: nothing to refund.
-    where: { requestId: { in: requestIds }, outcome: { in: REFUNDABLE_OUTCOMES }, NOT: { eventId: { startsWith: "reset-" } } },
-    select: { requestId: true },
-    distinct: ["requestId"],
-  });
-  return new Set(rows.map((p) => p.requestId).filter((id): id is string => id !== null));
+/** True when at least one asset's refund is more than dust. */
+export function refundOwed(lines: RefundLine[]): boolean {
+  return lines.some((l) => l.amountStroops >= REFUND_DUST_STROOPS);
 }
 
-/** Serialises requests with the refund flag looked up in one query. */
+/** Serialises requests with their refund amounts looked up in one query. */
 export async function presentRequests(db: Db, requests: PaymentRequest[]): Promise<RequestDto[]> {
-  const refundable = await requestsWithRefundablePayments(db, requests.map((r) => r.id));
-  return requests.map((r) => serializeRequest(r, refundable.has(r.id)));
+  const rows =
+    requests.length === 0
+      ? []
+      : await db.chainPayment.findMany({
+          where: { requestId: { in: requests.map((r) => r.id) }, outcome: { in: REFUNDABLE_OUTCOMES } },
+          select: { requestId: true, eventId: true, outcome: true, assetCode: true, assetIssuer: true, amountStroops: true },
+        });
+  return requests.map((r) => serializeRequest(r, rows.filter((p) => p.requestId === r.id)));
 }
 
 export async function presentRequest(db: Db, request: PaymentRequest): Promise<RequestDto> {
   return (await presentRequests(db, [request]))[0] as RequestDto;
 }
 
-export function serializeRequest(r: PaymentRequest, hasRefundablePayment = false): RequestDto {
+export function serializeRequest(r: PaymentRequest, payments: RefundablePayment[] = []): RequestDto {
+  const due = refundDue(r, payments);
   return {
     id: r.id,
     publicId: r.publicId,
@@ -90,7 +125,8 @@ export function serializeRequest(r: PaymentRequest, hasRefundablePayment = false
     paidAt: r.paidAt?.toISOString() ?? null,
     paidTxHash: r.paidTxHash,
     cancelledAt: r.cancelledAt?.toISOString() ?? null,
-    refundOwed: refundOwed(r, hasRefundablePayment),
+    refundOwed: refundOwed(due),
+    refundDue: due.map((l) => ({ asset: l.asset, amount: formatStroops(l.amountStroops), amountStroops: l.amountStroops.toString() })),
     createdVia: r.createdVia,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),

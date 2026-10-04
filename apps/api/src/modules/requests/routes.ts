@@ -4,7 +4,7 @@ import { authOf } from "../../middleware/auth";
 import { idempotency } from "../../middleware/idempotency";
 import { parse } from "../../middleware/validate";
 import type { PrismaClient } from "@prisma/client";
-import { checkoutUrl, presentRequest, presentRequests, REFUNDABLE_OUTCOMES, serializeEvent, serializePayment, serializeRequest } from "./serialize";
+import { checkoutUrl, presentRequest, presentRequests, serializeEvent, serializePayment, serializeRequest } from "./serialize";
 import type { RequestService } from "./service";
 
 export function requestRoutes(service: RequestService, prisma: PrismaClient): Router {
@@ -30,7 +30,7 @@ export function requestRoutes(service: RequestService, prisma: PrismaClient): Ro
     const { id } = parse(IdParamsSchema, req.params);
     const { request, payments, events } = await service.detail(authOf(req).merchantId, id);
     res.json({
-      request: serializeRequest(request, payments.some((p) => REFUNDABLE_OUTCOMES.includes(p.outcome) && !p.eventId.startsWith("reset-"))),
+      request: serializeRequest(request, payments),
       payments: payments.map((p) => serializePayment(p, { showWalletId: p.walletId === request.walletId })),
       events: events.map(serializeEvent),
     });

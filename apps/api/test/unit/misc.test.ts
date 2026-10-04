@@ -7,7 +7,7 @@ import { decodeHorizonOp } from "../../src/engine/sources/horizonBackfill";
 import { RpcEventSource } from "../../src/engine/sources/rpcEventSource";
 import { LoginThrottle } from "../../src/modules/auth/service";
 import { sep7Uri } from "../../src/modules/public/service";
-import { refundOwed } from "../../src/modules/requests/serialize";
+import { refundDue, refundOwed } from "../../src/modules/requests/serialize";
 import { ALLOWED, canTransition } from "../../src/modules/transitions";
 import { checkCanReceive } from "../../src/modules/wallets/capability";
 import { decodeSignature, verifyWalletSignature } from "../../src/modules/wallets/signature";
@@ -76,17 +76,26 @@ describe("transitions table", () => {
   });
 
   it("T3: refund flag is set for overpayments and for closed requests that received money", () => {
-    const amountStroops = 10n;
-    expect(refundOwed({ status: "OVERPAID", receivedStroops: 11n, amountStroops })).toBe(true);
-    expect(refundOwed({ status: "EXPIRED", receivedStroops: 5n, amountStroops })).toBe(true);
-    expect(refundOwed({ status: "EXPIRED", receivedStroops: 0n, amountStroops })).toBe(false);
-    expect(refundOwed({ status: "PAID", receivedStroops: 10n, amountStroops })).toBe(false);
-    expect(refundOwed({ status: "UNDERPAID", receivedStroops: 5n, amountStroops })).toBe(false);
-    // Accepted late payments that add up to more than was asked: PAID, but the excess is owed back.
-    expect(refundOwed({ status: "PAID", receivedStroops: 12n, amountStroops })).toBe(true);
-    // A payment that was not applied (duplicate, late, after cancel…) always means a refund.
-    expect(refundOwed({ status: "PAID", receivedStroops: 10n, amountStroops }, true)).toBe(true);
-    expect(refundOwed({ status: "CANCELLED", receivedStroops: 0n, amountStroops }, true)).toBe(true);
+    const usdc = { assetCode: "USDC", assetIssuer: USDC_ISSUER, amountStroops: 500_000_000n };
+    const total = (lines: ReturnType<typeof refundDue>) => lines.map((l) => `${l.asset.code}:${l.amountStroops}`);
+    expect(total(refundDue({ ...usdc, status: "OVERPAID", receivedStroops: 600_000_000n }))).toEqual(["USDC:100000000"]);
+    expect(total(refundDue({ ...usdc, status: "EXPIRED", receivedStroops: 200_000_000n }))).toEqual(["USDC:200000000"]);
+    expect(refundDue({ ...usdc, status: "EXPIRED", receivedStroops: 0n })).toEqual([]);
+    expect(refundDue({ ...usdc, status: "PAID", receivedStroops: 500_000_000n })).toEqual([]);
+    expect(refundDue({ ...usdc, status: "UNDERPAID", receivedStroops: 200_000_000n })).toEqual([]);
+    // Accepted late payments adding up to more than was asked: PAID, the excess is owed back.
+    expect(total(refundDue({ ...usdc, status: "PAID", receivedStroops: 650_000_000n }))).toEqual(["USDC:150000000"]);
+    // Unapplied payments are owed back in the asset they came in; counted and pre-reset ones are not.
+    const pay = (outcome: "DUPLICATE" | "WRONG_ASSET" | "COUNTED" | "LATE", amount: bigint, xlm = false, eventId = "e") =>
+      ({ eventId, outcome, assetCode: xlm ? "XLM" : "USDC", assetIssuer: xlm ? null : USDC_ISSUER, amountStroops: amount });
+    const lines = refundDue({ ...usdc, status: "PAID", receivedStroops: 500_000_000n }, [
+      pay("DUPLICATE", 500_000_000n), pay("DUPLICATE", 10n), pay("WRONG_ASSET", 70n, true), pay("COUNTED", 500_000_000n), pay("LATE", 9n, false, "reset-1-e"),
+    ]);
+    expect(total(lines).sort()).toEqual(["USDC:500000010", "XLM:70"]);
+    // The flag ignores dust: a stranger's one-stroop payment cannot raise it.
+    expect(refundOwed(lines)).toBe(true);
+    expect(refundOwed(refundDue({ ...usdc, status: "PAID", receivedStroops: 500_000_000n }, [pay("WRONG_ASSET", 1n, true), pay("DUPLICATE", 99_999n)]))).toBe(false);
+    expect(refundOwed(refundDue({ ...usdc, status: "PAID", receivedStroops: 500_000_000n }, [pay("DUPLICATE", 100_000n)]))).toBe(true);
   });
 });
 

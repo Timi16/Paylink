@@ -275,7 +275,7 @@ Request states and payment outcomes
 A request moves only through transitionRequest() and the allowed table in the Backend tab; the drawing shows the main paths.
 Not drawn, but allowed: PENDING straight to OVERPAID (one payment for more than asked); the merchant's Accept moving UNDERPAID, EXPIRED with late payments, or CANCELLED with a payment that arrived after the cancel, to PAID; and PENDING/UNDERPAID to NETWORK_RESET when testnet is wiped. PAID, OVERPAID and NETWORK_RESET are final; CANCELLED is final unless the merchant accepts a payment that arrived after the cancel.
 Payment outcomes
-Every detected payment to a watched wallet gets exactly one outcome; only COUNTED changes a request's received amount. A request's refundOwed flag is true when it received more than asked, closed unpaid with money counted, or has any DUPLICATE, LATE, AFTER_CANCEL, AFTER_RESET or WRONG_ASSET payment.
+Every detected payment to a watched wallet gets exactly one outcome; only COUNTED changes a request's received amount. Each request carries refundDue: the amounts to send back, per asset (the excess over what was asked, money counted on a request that closed unpaid, and every DUPLICATE, LATE, AFTER_CANCEL, AFTER_RESET or WRONG_ASSET payment; pre-reset payments excluded). refundOwed is true when one of those amounts is at least 0.01; smaller amounts are dust, still listed, because the memo is public and anyone can attach a one-stroop payment to a request.
 Outcome
 Meaning
 Shown to merchant as

@@ -326,6 +326,8 @@ Example response:
     "muxedAddress": "MABC…",
     "expiresAt": "2026-10-07T10:30:00Z",
     "paidTxHash": null,
+    "refundOwed": false,
+    "refundDue": [],
     "description": "Order #1042"
   },
   "checkoutUrl": "https://paylink.<domain>/pay/aZ81kQp0LmX3"

@@ -82,8 +82,15 @@ export const RequestSchema = z.object({
   paidAt: z.string().nullable(),
   paidTxHash: z.string().nullable(),
   cancelledAt: z.string().nullable(),
-  /** Money arrived that the merchant should send back (overpaid, or closed with funds received). */
+  /** True when `refundDue` holds an amount of at least 0.01 of some asset. */
   refundOwed: z.boolean(),
+  /**
+   * What to send back, per asset: any excess over the amount asked, money counted on a
+   * request that closed unpaid, and payments that were not applied (duplicate, late, after
+   * cancel or reset, wrong asset). `refundOwed` is true when one of these is at least 0.01;
+   * smaller amounts are listed here but treated as dust.
+   */
+  refundDue: z.array(z.object({ asset: AssetSchema, amount: z.string(), amountStroops: z.string() })),
   createdVia: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
