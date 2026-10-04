@@ -7,8 +7,11 @@ const path = require("node:path");
 const common = {
   cwd: path.join(__dirname, "apps/api"),
   node_args: "--max-old-space-size=192 --env-file=../../.env",
-  // The API must stay a single instance: live updates (SSE fan-out) and the login throttle
-  // live in memory. Never switch this to cluster mode.
+  // One instance is right for the 1-core server. More API instances are safe if ever
+  // needed: live updates reach every instance through Postgres NOTIFY, and the login
+  // throttle and credential rate limit are stored in Postgres. Only the high-volume
+  // limits (/v1 per merchant, public per IP, open streams) are per instance, so they
+  // scale with the instance count. Run exactly ONE worker.
   exec_mode: "fork",
   instances: 1,
   autorestart: true,

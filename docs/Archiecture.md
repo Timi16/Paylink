@@ -65,7 +65,7 @@ One event shape (CAP-67) for payments, path payments, contract wallets
 Short RPC history → Horizon kept for backfill
 No Redis; Postgres LISTEN/NOTIFY for live updates
 One less service on a 2 GB server
-Single API instance (fine at testnet scale)
+One API instance is enough at testnet scale; more are safe (NOTIFY reaches every instance, login throttle and credential limit are in Postgres), with the high-volume limits counted per instance. Always exactly one worker
 One Next.js app for dashboard + checkout
 Shared components and tokens; one deploy
 Checkout bundle must stay lean (no dashboard code on /pay)
@@ -313,7 +313,7 @@ Accounts and access
 [ ] Passwords: argon2id, minimum 10 characters
 [ ] Sessions: 32-byte random token in an httpOnly, Secure, SameSite=Lax cookie; only its SHA-256 stored; 14-day expiry; rotated on login
 [ ] CSRF: cookie-authenticated POST/PATCH/DELETE must carry an Origin equal to WEB_ORIGIN
-[ ] Login rate limit 5/min per IP plus growing per-account delay; same error for wrong email or password
+[ ] Login rate limit 5/min per IP; growing delay per (email, IP) from the 3rd failure; account-wide lock only after 20 failures in an hour, and never for a browser that has logged in to the account before (trusted-device cookie), so knowing an email is not enough to lock a merchant out; same error for wrong email or password
 [ ] API keys: pl_test_ + 32 random bytes (base62), shown once, SHA-256 stored, revocable
 [ ] Tenant isolation: every repo function on merchant data requires merchantId; tests prove cross-merchant access returns 404
 Wallets
@@ -357,7 +357,7 @@ Separate paylink database and DB user
 caddy (shared)
 64 MB
 HTTPS + reverse proxy to 127.0.0.1:4100
-Both processes are defined in ecosystem.config.cjs: autorestart with backoff, pm2 startup + pm2 save so they survive a reboot, pm2-logrotate for logs. The API must stay a single instance (live updates and the login throttle are in memory). 2 GB swap as the safety net.
+Both processes are defined in ecosystem.config.cjs: autorestart with backoff, pm2 startup + pm2 save so they survive a reboot, pm2-logrotate for logs. One API instance by default; exactly one worker always. 2 GB swap as the safety net.
 Domains
 Address
 Serves

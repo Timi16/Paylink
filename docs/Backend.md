@@ -77,7 +77,7 @@ Middleware order
 7. Routes:
     ◦ GET /health, GET /docs (Scalar), GET /openapi.json: public
     ◦ /public/*: 60/min per IP; SSE capped at 5 streams per IP
-    ◦ /auth/*: requireOrigin; 5/min per IP on signup, login and password change; 60/min per IP on me and logout (the dashboard calls them on every load)
+    ◦ /auth/*: requireOrigin; 5/min per IP on signup, login and password change (counted in Postgres, so it holds across API instances); 60/min per IP on me, logout and settings
     ◦ /v1/*: requireAny (session or API key), requireOrigin on the session path, 300/min per merchant
 8. 404 → NOT_FOUND; then errorHandler
 Authentication
@@ -180,7 +180,9 @@ export function normalizeMemo(raw: string): string | null {
 matcher.process(tx, payment)
 insert ChainPayment ... ON CONFLICT (eventId) DO NOTHING; if no row -> return
 
-if memoType == "none"                     -> outcome NO_MEMO
+if memoType == "none"                     -> outcome NO_MEMO, unless the merchant enabled autoMatchByAmount and exactly ONE open,
+                                             unexpired request on this wallet and asset has remaining == amount (to the stroop):
+                                             then lock it and run the status switch (matchedBy "amount")
 else if memoType == "hash"                -> outcome MEMO_TYPE_MISMATCH
 else memo = memoType == "text" ? normalizeMemo(raw) : idToMemo(raw)   // id = the memo's 40 bits as a number
      req  = memo ? SELECT ... FROM PaymentRequest WHERE memo = $1 FOR UPDATE : null
@@ -224,6 +226,7 @@ export async function transitionRequest(tx, id, expected, to, reason, actor, pay
 Merchant actions
 • Cancel: PENDING only → CANCELLED.
 • Accept: from UNDERPAID, from EXPIRED when it has at least one LATE payment, or from CANCELLED when it has at least one AFTER_CANCEL payment (the customer paid as the merchant cancelled). Those LATE / AFTER_CANCEL payments become COUNTED, receivedStroops is recomputed, and the request becomes PAID (actor merchant, reason accepted). The dashboard shows the amount accepted versus the amount asked.
+• Unmatched payments in GET /v1/payments carry suggestedRequestId: the one open request the payment exactly settles, if there is exactly one, for a one-click assign.
 • Assign unmatched: only for NO_MEMO, UNKNOWN_MEMO, MEMO_TYPE_MISMATCH payments, to a request on the same wallet and asset. Runs the same decision path from the status switch onward with assignedManually = true.
 Expiry, live status and wallet checks
 Three smaller services around the matcher: the sweeper that expires requests safely, the streams that make status changes appear instantly, and the checks that stop requests on wallets that can't receive.
@@ -267,6 +270,9 @@ GET /auth/me
 POST /auth/password
 currentPassword, newPassword
 204; other sessions deleted
+POST /auth/settings
+autoMatchByAmount
+200 { merchant }
 API keys (session)
 GET /v1/api-keys · POST /v1/api-keys { name } → 201 { apiKey, key: "pl_test_…" } (full key shown once) · DELETE /v1/api-keys/:id → 204.
 Wallets (session)
@@ -469,7 +475,7 @@ Path payment (payer sends XLM, wallet gets USDC)
 Counted by USDC received
 P15
 Payer is a contract wallet (C address)
-Detected and matched normally. Soroban transactions cannot carry a text memo, so the payer sends to the request's muxedAddress (wallet + memoId) and the mux id identifies the request; sent to the plain G address with nothing, it is NO_MEMO → assignable
+Detected and matched normally. Soroban transactions cannot carry a text memo, so the payer sends to the request's muxedAddress (wallet + memoId) and the mux id identifies the request. Sent to the plain G address with nothing: matched by exact amount if the merchant enabled autoMatchByAmount and only one request fits; otherwise NO_MEMO with a suggested request → one-click assign
 P16
 Paid to the wallet's M-address
 Base wallet resolved; mux ID equal to a request's memoId → matched; any other mux ID → MEMO_TYPE_MISMATCH, assignable

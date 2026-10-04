@@ -67,7 +67,7 @@ polls `/health` for 60 s and rolls back to the previous commit if it stays unhea
 [.github/workflows/ci.yml](.github/workflows/ci.yml) runs lint, typecheck and tests, then
 calls that script over SSH.
 
-- Keep `paylink-api` at **one instance in fork mode**: live updates and the login throttle are in memory.
+- Run exactly **one** `paylink-worker`. `paylink-api` can run more than one instance if ever needed (live updates go through Postgres NOTIFY; login throttling and the credential rate limit are in Postgres); the high-volume rate limits and stream caps are per instance.
 - Put Caddy in front ([deploy/Caddyfile.snippet](deploy/Caddyfile.snippet)); the API trusts exactly one proxy hop.
 - Log rotation: `pm2 install pm2-logrotate`.
 
