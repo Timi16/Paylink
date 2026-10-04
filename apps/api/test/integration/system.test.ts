@@ -258,6 +258,11 @@ describe("system", () => {
     ]);
 
     e.source.reset(10); // tip far behind the cursor: the network was wiped
+    // One odd answer is not enough to close every open request: it takes 3 polls in a row.
+    await e.ingestion.tick();
+    await e.ingestion.tick();
+    expect((await getRequest(open.id)).status).toBe("PENDING");
+    expect(e.alerter.messages).toEqual([]);
     await e.ingestion.tick();
 
     expect((await getRequest(open.id)).status).toBe("NETWORK_RESET");
@@ -284,6 +289,55 @@ describe("system", () => {
     expect((await getRequest(fresh.id)).status).toBe("PAID");
     // A small rewind (under 100 ledgers) is not treated as a reset.
     expect(await prisma.paymentRequest.count({ where: { status: "NETWORK_RESET" } })).toBe(2);
+  });
+
+  it("S5: a stale RPC node reporting an old tip is an RPC fault, not a reset: nothing is closed", async () => {
+    const open = await createRequest(merchant, wallet);
+    const [p] = await e.pay({ to: wallet.address, amountStroops: USDC(1) });
+    const before = await cursor();
+    for (let i = 0; i < 150; i++) e.source.closeLedger();
+    await e.ingestion.tick();
+    const real = e.source.ledger;
+    // A lagging node answers: its tip is 150 ledgers back and closed 12 minutes ago.
+    e.source.staleTip = { ledger: real - 150, closedAt: new Date(Date.now() - 12 * 60_000) };
+    for (let i = 0; i < 5; i++) await expect(e.ingestion.tick()).rejects.toThrow(/stale/);
+    expect((await getRequest(open.id)).status).toBe("PENDING");
+    expect(await prisma.chainPayment.findUnique({ where: { eventId: p!.eventId } })).not.toBeNull(); // ids untouched
+    expect((await cursor()).ledger).toBe(real);
+    expect(before.lastNetworkResetAt).toBeNull();
+    expect((await cursor()).lastNetworkResetAt).toBeNull();
+    expect(e.alerter.messages).toEqual([]);
+    // The healthy node answers again and everything carries on.
+    e.source.staleTip = null;
+    await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: open.memo });
+    expect((await getRequest(open.id)).status).toBe("PAID");
+  });
+
+  it("S5: payments from before a reset cannot be assigned to requests created after it", async () => {
+    const [old] = await e.pay({ to: wallet.address, amountStroops: USDC(50) }); // unmatched, pre-reset
+    e.source.reset(10);
+    for (let i = 0; i < 3; i++) await e.ingestion.tick();
+    const fresh = await createRequest(merchant, wallet);
+    const renamed = await prisma.chainPayment.findFirstOrThrow({ where: { txHash: old!.txHash } });
+    expect(renamed.eventId).toMatch(/^reset-/);
+    const res = await merchant.agent.post(`/v1/payments/${renamed.eventId}/assign`).set("Origin", ORIGIN).send({ requestId: fresh.id });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe("PAYMENT_NOT_ASSIGNABLE");
+    expect((await getRequest(fresh.id)).status).toBe("PENDING");
+  });
+
+  it("S4: a long Horizon backfill keeps the worker heartbeat alive, so the watchdog does not kill it mid-way", async () => {
+    e.source.ledger = 6000;
+    e.source.oldestLedger = 5000;
+    e.ingestion.lastTickAt = 0; // as if the previous tick finished long ago
+    let seenDuringBackfill = 0;
+    const original = e.backfill.payments.bind(e.backfill);
+    e.backfill.payments = (address, from, to) => {
+      seenDuringBackfill = e.ingestion.lastTickAt;
+      return original(address, from, to);
+    };
+    await e.ingestion.tick();
+    expect(seenDuringBackfill).toBeGreaterThan(Date.now() - 5000);
   });
 
   it("reconciliation recovers a payment made just before its wallet was registered", async () => {

@@ -124,7 +124,8 @@ describe("matching", () => {
     expect(mine.body.data).toMatchObject([{ outcome: "WRONG_WALLET", requestId: null }]);
     // The request's owner sees that someone paid the wrong wallet.
     const detail = await other.merchant.agent.get(`/v1/payment-requests/${theirs.id}`);
-    expect(detail.body.payments).toMatchObject([{ outcome: "WRONG_WALLET", to: wallet.address }]);
+    // …with the address, but never the other merchant's internal wallet id.
+    expect(detail.body.payments).toMatchObject([{ outcome: "WRONG_WALLET", to: wallet.address, walletId: null }]);
   });
 
   it("P9: an amount below the asked one is COUNTED -> UNDERPAID with the remaining amount exposed", async () => {
@@ -171,6 +172,9 @@ describe("matching", () => {
     const [dup] = await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: req.memo });
     expect(await getPayment(dup!.eventId)).toMatchObject({ outcome: "DUPLICATE", requestId: req.id });
     expect(await getRequest(req.id)).toMatchObject({ status: "PAID", receivedStroops: USDC(50) });
+    // The duplicate is money to send back: flagged on the detail, the list and the action responses.
+    expect((await merchant.agent.get(`/v1/payment-requests/${req.id}`)).body.request.refundOwed).toBe(true);
+    expect((await merchant.agent.get("/v1/payment-requests?status=PAID")).body.data[0].refundOwed).toBe(true);
 
     const over = await createRequest(merchant, wallet);
     await e.pay({ to: wallet.address, amountStroops: USDC(51), memoRaw: over.memo });
@@ -225,6 +229,20 @@ describe("matching", () => {
     const [p] = await e.pay({ to: wallet.address, amountStroops: USDC(20), memoRaw: req.memoId, memoType: "id" });
     expect((await getPayment(p!.eventId)).outcome).toBe("COUNTED");
     expect((await getRequest(req.id)).status).toBe("UNDERPAID");
+  });
+
+  it("P16: a mux id that happens to equal another wallet's request stays MEMO_TYPE_MISMATCH and assignable", async () => {
+    const other = await setupMerchant(t, "Other Shop");
+    const theirs = await createRequest(other.merchant, other.wallet);
+    const mine = await createRequest(merchant, wallet);
+    // This merchant's own customer id collides with the other merchant's numeric reference.
+    const [p] = await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: theirs.memoId, memoType: "id", toMuxedId: theirs.memoId });
+    expect(await getPayment(p!.eventId)).toMatchObject({ outcome: "MEMO_TYPE_MISMATCH", requestId: null, memoNormalized: null });
+    expect((await getRequest(theirs.id)).status).toBe("PENDING");
+    const detail = await other.merchant.agent.get(`/v1/payment-requests/${theirs.id}`);
+    expect(detail.body.payments).toEqual([]);
+    const res = await merchant.agent.post(`/v1/payments/${p!.eventId}/assign`).set("Origin", ORIGIN).send({ requestId: mine.id });
+    expect(res.body).toMatchObject({ payment: { outcome: "COUNTED" }, request: { status: "PAID" } });
   });
 
   it("P16: a payment to the wallet's M-address resolves the base wallet; the mux id makes it MEMO_TYPE_MISMATCH and assignable", async () => {

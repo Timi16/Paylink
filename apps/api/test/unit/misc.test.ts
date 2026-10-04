@@ -72,11 +72,17 @@ describe("transitions table", () => {
   });
 
   it("T3: refund flag is set for overpayments and for closed requests that received money", () => {
-    expect(refundOwed({ status: "OVERPAID", receivedStroops: 10n })).toBe(true);
-    expect(refundOwed({ status: "EXPIRED", receivedStroops: 10n })).toBe(true);
-    expect(refundOwed({ status: "EXPIRED", receivedStroops: 0n })).toBe(false);
-    expect(refundOwed({ status: "PAID", receivedStroops: 10n })).toBe(false);
-    expect(refundOwed({ status: "UNDERPAID", receivedStroops: 10n })).toBe(false);
+    const amountStroops = 10n;
+    expect(refundOwed({ status: "OVERPAID", receivedStroops: 11n, amountStroops })).toBe(true);
+    expect(refundOwed({ status: "EXPIRED", receivedStroops: 5n, amountStroops })).toBe(true);
+    expect(refundOwed({ status: "EXPIRED", receivedStroops: 0n, amountStroops })).toBe(false);
+    expect(refundOwed({ status: "PAID", receivedStroops: 10n, amountStroops })).toBe(false);
+    expect(refundOwed({ status: "UNDERPAID", receivedStroops: 5n, amountStroops })).toBe(false);
+    // Accepted late payments that add up to more than was asked: PAID, but the excess is owed back.
+    expect(refundOwed({ status: "PAID", receivedStroops: 12n, amountStroops })).toBe(true);
+    // A payment that was not applied (duplicate, late, after cancel…) always means a refund.
+    expect(refundOwed({ status: "PAID", receivedStroops: 10n, amountStroops }, true)).toBe(true);
+    expect(refundOwed({ status: "CANCELLED", receivedStroops: 0n, amountStroops }, true)).toBe(true);
   });
 });
 
@@ -255,17 +261,30 @@ describe("RpcEventSource", () => {
     expect(res.payments[0]).toMatchObject({ memoType: "text", memoRaw: "PL7K2M9QXA", innerTxHash: null, txHash: env.outer });
   });
 
-  it("only looks up transactions for watched wallets, caches them, and survives a missing transaction", async () => {
+  it("only looks up transactions for watched wallets, caches hits but not misses, and survives a missing transaction", async () => {
     const env = envelope({});
     const mine = rawEvent({ to: WALLET, asset: USDC, amount: 5n, txHash: env.outer });
     const other = rawEvent({ to: Keypair.random().publicKey(), asset: USDC, amount: 5n, txHash: "ff".repeat(32) });
-    const gone = rawEvent({ to: WALLET, asset: "native", amount: 7n, txHash: "ee".repeat(32), id: "0021474836480000001-0000000000" });
+    // A memo-less event whose transaction RPC no longer has, from a ledger long past.
+    const gone = rawEvent({ to: WALLET, asset: "native", amount: 7n, txHash: "ee".repeat(32), ledger: 4_000_000, id: "0017179869184000000-0000000000" });
     const { source, calls } = sourceWith([mine, other, gone], { [env.outer]: env.xdr });
     const res = await source.fetch({ startLedger: 1, limit: 200, isWatched: (a) => a === WALLET });
     expect(res.payments).toHaveLength(2);
     expect(res.payments[1]).toMatchObject({ memoType: "none", amountStroops: 7n });
     await source.fetch({ startLedger: 1, limit: 200, isWatched: (a) => a === WALLET });
-    expect(calls.getTransaction).toBe(2);
+    // Second pass: the found transaction is served from the cache; the missing one is looked
+    // up again (a miss is never cached, it may just not be indexed yet).
+    expect(calls.getTransaction).toBe(3);
+  });
+
+  it("P15: a recent memo-less event whose transaction is not readable yet fails the batch instead of becoming NO_MEMO", async () => {
+    const pending = rawEvent({ to: WALLET, asset: USDC, amount: 5n, txHash: "dd".repeat(32) }); // ledger 5,000,000; tip 5,000,001
+    const { source } = sourceWith([pending], {});
+    await expect(source.fetch({ startLedger: 1, limit: 200, isWatched: all })).rejects.toThrow(/not available from RPC yet/);
+    // With its memo already in the event there is nothing to wait for.
+    const withMemo = rawEvent({ to: WALLET, asset: USDC, amount: 5n, txHash: "dd".repeat(32), muxed: { text: "PL7K2M9QXA" } });
+    const res = await sourceWith([withMemo], {}).source.fetch({ startLedger: 1, limit: 200, isWatched: all });
+    expect(res.payments[0]).toMatchObject({ memoRaw: "PL7K2M9QXA", innerTxHash: null });
   });
 
   it("T5: reports the last fully processed ledger conservatively", async () => {

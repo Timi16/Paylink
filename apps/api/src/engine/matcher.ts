@@ -158,7 +158,16 @@ export async function processPayment(
         assetIssuer: payment.assetIssuer,
         amountStroops: payment.amountStroops,
       };
-      outcome = targetMismatch(facts, req) ?? (await applyToRequest(tx, facts, req));
+      const mismatch = targetMismatch(facts, req);
+      if (mismatch === "WRONG_WALLET" && payment.memoType !== "text") {
+        // A MEMO_ID / mux id is not a deliberate PayLink reference: merchants use their own
+        // numbers. One that happens to equal another wallet's request must stay assignable.
+        outcome = "MEMO_TYPE_MISMATCH";
+        requestId = null;
+        memoNormalized = null;
+      } else {
+        outcome = mismatch ?? (await applyToRequest(tx, facts, req));
+      }
     }
   }
 

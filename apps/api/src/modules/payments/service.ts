@@ -9,6 +9,9 @@ import * as requestRepo from "../requests/repo";
 import { lockRequestById } from "../transitions";
 import * as repo from "./repo";
 
+/** networkReset.ts renames every pre-reset event id to start with this. */
+const RESET_EVENT_PREFIX = "reset-";
+
 const isUnmatched = (outcome: PaymentOutcome): boolean =>
   (UNMATCHED_OUTCOMES as readonly PaymentOutcome[]).includes(outcome);
 
@@ -53,6 +56,10 @@ export function createPaymentService(deps: AppDeps) {
         if (!payment) throw notFound("Payment");
         if (payment.requestId !== null || !isUnmatched(payment.outcome)) {
           throw new AppError("PAYMENT_NOT_ASSIGNABLE", "Only unmatched payments can be assigned to a request");
+        }
+        if (payment.eventId.startsWith(RESET_EVENT_PREFIX)) {
+          // Those funds were wiped with the old network; they cannot pay a new request.
+          throw new AppError("PAYMENT_NOT_ASSIGNABLE", "This payment was made before a testnet reset and no longer exists on the network");
         }
         const req = await lockRequestById(tx, requestId);
         if (!req || req.merchantId !== merchantId) throw notFound("Payment request");

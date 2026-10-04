@@ -56,6 +56,8 @@ export class FakeStellarSource implements StellarSource {
   ledger = 1000;
   oldestLedger = 1;
   failing = false;
+  /** When set, getTip answers like a lagging RPC node. */
+  staleTip: { ledger: number; closedAt: Date } | null = null;
   fetchCalls = 0;
   private events: NormalizedPayment[] = [];
   // The chain starts an hour in the past so tests can close ledgers at earlier times.
@@ -102,6 +104,7 @@ export class FakeStellarSource implements StellarSource {
 
   async getTip(): Promise<ChainTip> {
     if (this.failing) throw new Error("rpc unavailable");
+    if (this.staleTip) return { ...this.staleTip, oldestLedger: this.oldestLedger };
     return {
       ledger: this.ledger,
       closedAt: this.closeTimes.get(this.ledger) ?? new Date(),

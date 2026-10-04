@@ -24,6 +24,9 @@ const FILTERS: rpc.Api.EventFilter[] = [
   },
 ];
 
+/** About 40 minutes of ledgers: how long a missing transaction blocks its batch before we move on. */
+const TX_LOOKUP_RETRY_LEDGERS = 500;
+
 interface TxInfo {
   outerHash: string;
   innerHash: string | null;
@@ -46,7 +49,7 @@ function epochToDate(value: string | number | undefined): Date | null {
 
 export class RpcEventSource implements StellarSource {
   private readonly server: rpc.Server;
-  private readonly txCache = new Map<string, TxInfo | null>();
+  private readonly txCache = new Map<string, TxInfo>();
 
   constructor(private readonly opts: RpcEventSourceOptions) {
     this.server = new rpc.Server(opts.rpcUrl, {
@@ -79,7 +82,7 @@ export class RpcEventSource implements StellarSource {
     for (const ev of events) {
       const payment = decodeEvent(ev, this.opts.networkPassphrase);
       if (!payment || !params.isWatched(payment.to)) continue;
-      payments.push(await this.enrich(payment));
+      payments.push(await this.enrich(payment, res.latestLedger));
     }
 
     return {
@@ -130,8 +133,18 @@ export class RpcEventSource implements StellarSource {
    * the envelope memo when the event carries none (e.g. a contract wallet invoking the SAC
    * `transfer` directly: the memo is on the transaction, not in the event).
    */
-  private async enrich(payment: NormalizedPayment): Promise<NormalizedPayment> {
+  private async enrich(payment: NormalizedPayment, latestLedger: number): Promise<NormalizedPayment> {
     const info = await this.txInfo(payment.txHash);
+    if (info === "missing") {
+      // The event has no memo and its transaction cannot be read yet (a lagging node). Its
+      // memo may be on the envelope, so recording it now could file a paid request under
+      // NO_MEMO for good. Fail the batch and retry; only give up once the ledger is old
+      // enough that the transaction is plainly not coming back.
+      if (payment.memoType === "none" && latestLedger - payment.ledger < TX_LOOKUP_RETRY_LEDGERS) {
+        throw new Error(`transaction ${payment.txHash} is not available from RPC yet`);
+      }
+      return payment;
+    }
     if (!info) return payment;
     const enriched: NormalizedPayment = {
       ...payment,
@@ -145,14 +158,16 @@ export class RpcEventSource implements StellarSource {
     return enriched;
   }
 
-  private async txInfo(hash: string): Promise<TxInfo | null> {
-    if (this.txCache.has(hash)) return this.txCache.get(hash) ?? null;
+  /** "missing" = RPC does not have the transaction; null = it has it but it could not be parsed. */
+  private async txInfo(hash: string): Promise<TxInfo | "missing" | null> {
+    const cached = this.txCache.get(hash);
+    if (cached) return cached;
     // Transient failures throw: the batch is retried rather than recorded with a wrong memo.
     const res = await this.server._getTransaction(hash);
-    let info: TxInfo | null = null;
-    if (res.status === rpc.Api.GetTransactionStatus.SUCCESS && res.envelopeXdr) {
-      info = this.parseEnvelope(hash, res.envelopeXdr);
-    }
+    if (res.status !== rpc.Api.GetTransactionStatus.SUCCESS || !res.envelopeXdr) return "missing";
+    const info = this.parseEnvelope(hash, res.envelopeXdr);
+    // Only hits are cached: a miss may just mean the transaction is not indexed yet.
+    if (!info) return null;
     if (this.txCache.size >= 1000) {
       const oldest = this.txCache.keys().next().value;
       if (oldest !== undefined) this.txCache.delete(oldest);

@@ -61,9 +61,15 @@ class CrossSourceDedupe {
   }
 }
 
+/** A wiped network must be seen on this many consecutive polls before anything is closed. */
+export const RESET_CONFIRMATIONS = 3;
+/** A real reset has a live tip. A tip older than this is a stale RPC node, not a reset. */
+const FRESH_TIP_MS = 5 * 60_000;
+
 export class Ingestion {
-  /** Heartbeat for the watchdog: last time a tick finished (successfully or not). */
+  /** Heartbeat for the watchdog: last time the loop made progress. */
   lastTickAt = Date.now();
+  private resetSamples = 0;
   private chain: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly deps: IngestionDeps) {}
@@ -114,9 +120,19 @@ export class Ingestion {
     const cursor = (await this.loadCursor()) ?? (await this.initCursor(tip));
 
     if (isNetworkReset(tip.ledger, cursor.ledger)) {
+      // Closing every open request cannot be undone, so one odd answer is not enough. A node
+      // that is merely behind reports an OLD tip (100 ledgers is over 8 minutes); after a
+      // real reset the tip is low but live.
+      if (Date.now() - tip.closedAt.getTime() > FRESH_TIP_MS) {
+        this.resetSamples = 0;
+        throw new Error(`RPC tip ${tip.ledger} is stale and behind the cursor ${cursor.ledger}; not treating it as a network reset`);
+      }
+      if (++this.resetSamples < RESET_CONFIRMATIONS) return { full: false, processed: 0 };
+      this.resetSamples = 0;
       await handleNetworkReset(prisma, tip, this.deps.alerter, this.deps.logger);
       return { full: false, processed: 0 };
     }
+    this.resetSamples = 0;
 
     const tokenLedger = cursor.pagingToken ? ledgerOfCursor(cursor.pagingToken) : null;
     const usingToken = cursor.pagingToken !== null && tokenLedger !== null;
@@ -159,7 +175,10 @@ export class Ingestion {
       return count;
     }, TX_OPTIONS);
 
-    return { full: res.full, processed };
+    // RPC scans a bounded number of ledgers per call. A short page that stopped before the
+    // tip means there is more to read right now, so the loop should not sleep.
+    const behind = (res.processedThrough?.ledger ?? res.latestLedger) < res.latestLedger - 1;
+    return { full: res.full || behind, processed };
   }
 
   /**
@@ -175,7 +194,9 @@ export class Ingestion {
     let processed = 0;
     const dedupe = new CrossSourceDedupe();
     for (const wallet of watched.all()) {
+      this.lastTickAt = Date.now(); // a long backfill is progress, not a hang
       for await (const page of backfill.payments(wallet.address, from, to)) {
+        this.lastTickAt = Date.now();
         processed += await prisma.$transaction(async (tx) => {
           let count = 0;
           for (const payment of page) {
@@ -220,6 +241,7 @@ export class Ingestion {
     let pageCursor: string | null = null;
     const dedupe = new CrossSourceDedupe();
     for (let page = 0; page < 50; page++) {
+      this.lastTickAt = Date.now(); // reconciliation holds the tick lock; keep the heartbeat alive
       const res = await source.fetch({
         cursor: pageCursor,
         startLedger: start,
