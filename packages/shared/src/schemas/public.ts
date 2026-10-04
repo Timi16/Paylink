@@ -14,6 +14,8 @@ export const CheckoutSchema = z.object({
   asset: AssetSchema,
   wallet: z.string(),
   memo: z.string(),
+  memoId: z.string(),
+  muxedAddress: z.string(),
   description: z.string().nullable(),
   status: z.enum(REQUEST_STATUSES),
   expiresAt: z.string(),

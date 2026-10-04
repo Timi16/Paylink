@@ -208,6 +208,25 @@ describe("matching", () => {
     expect((await getRequest(req.id)).status).toBe("PAID");
   });
 
+  it("P15: a contract wallet pays the request's muxed address (no memo possible) and is matched automatically", async () => {
+    const req = await createRequest(merchant, wallet);
+    expect(req.muxedAddress).toMatch(/^M[A-Z2-7]{68}$/);
+    const contract = "CAYPAQDKNWMHRATKU5DQ327VDHVRSIVK7UGVWT2A5SUZCUFTLUHXH2JA";
+    // What the chain reports for a transfer to that M-address: base G + the mux id.
+    const [p] = await e.pay({ to: wallet.address, from: contract, amountStroops: USDC(50), memoRaw: req.memoId, memoType: "id", toMuxedId: req.memoId });
+    expect(await getPayment(p!.eventId)).toMatchObject({ outcome: "COUNTED", requestId: req.id, memoNormalized: req.memo, toMuxedId: req.memoId });
+    expect((await getRequest(req.id)).status).toBe("PAID");
+    const pub = await merchant.agent.get(`/public/pay/${req.publicId}`);
+    expect(pub.body).toMatchObject({ memoId: req.memoId, muxedAddress: req.muxedAddress });
+  });
+
+  it("P5: a MEMO_ID equal to the request's numeric reference is matched (for payers that only support numeric memos)", async () => {
+    const req = await createRequest(merchant, wallet);
+    const [p] = await e.pay({ to: wallet.address, amountStroops: USDC(20), memoRaw: req.memoId, memoType: "id" });
+    expect((await getPayment(p!.eventId)).outcome).toBe("COUNTED");
+    expect((await getRequest(req.id)).status).toBe("UNDERPAID");
+  });
+
   it("P16: a payment to the wallet's M-address resolves the base wallet; the mux id makes it MEMO_TYPE_MISMATCH and assignable", async () => {
     const req = await createRequest(merchant, wallet);
     const [p] = await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: "42", memoType: "id", toMuxedId: "42" });

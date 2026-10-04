@@ -1,6 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { generateMemo, normalizeMemo } from "../../src/lib/memo";
+import { generateMemo, idToMemo, memoToId, normalizeMemo } from "../../src/lib/memo";
 
 describe("memo", () => {
   it("generates PL + 8 Crockford characters", () => {
@@ -14,6 +14,20 @@ describe("memo", () => {
     expect(normalizeMemo("PLO0OOOOOO")).toBe("PL00000000");
     expect(normalizeMemo("PLIL1il1AB")).toBe("PL111111AB");
     expect(normalizeMemo("pl 0o-1i-lL-ZZ")).toBe("PL001111ZZ");
+  });
+
+  it("P15: every memo has a numeric form (40 bits) that maps back to it", () => {
+    expect(memoToId("PL00000000")).toBe(0n);
+    expect(memoToId("PL00000010")).toBe(32n);
+    expect(memoToId("PLZZZZZZZZ")).toBe(2n ** 40n - 1n);
+    expect(idToMemo("0")).toBe("PL00000000");
+    expect(idToMemo("1099511627775")).toBe("PLZZZZZZZZ");
+    for (const bad of ["1099511627776", "-1", "1.5", "", "abc", "99999999999999999999"]) expect(idToMemo(bad), bad).toBeNull();
+    fc.assert(
+      fc.property(fc.constant(null).map(generateMemo), (memo) => {
+        expect(idToMemo(memoToId(memo).toString())).toBe(memo);
+      }),
+    );
   });
 
   it("rejects anything that is not a PayLink memo", () => {

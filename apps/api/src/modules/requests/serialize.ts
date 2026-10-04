@@ -6,10 +6,21 @@ import type {
   RequestEvent as RequestEventDto,
 } from "@paylink/shared";
 import { env } from "../../config/env";
+import { Account, MuxedAccount } from "@stellar/stellar-sdk";
 import { formatStroops } from "../../lib/amount";
+import { memoToId } from "../../lib/memo";
 
 export function checkoutUrl(publicId: string): string {
   return `${env.WEB_ORIGIN}/pay/${publicId}`;
+}
+
+/** The request's two no-text-memo references: the memo as a number, and wallet + number as an M… address. */
+export function numericReference(r: Pick<PaymentRequest, "memo" | "walletAddress">): {
+  memoId: string;
+  muxedAddress: string;
+} {
+  const memoId = memoToId(r.memo).toString();
+  return { memoId, muxedAddress: new MuxedAccount(new Account(r.walletAddress, "0"), memoId).accountId() };
 }
 
 export function remainingStroops(r: Pick<PaymentRequest, "amountStroops" | "receivedStroops">): bigint {
@@ -38,6 +49,7 @@ export function serializeRequest(r: PaymentRequest): RequestDto {
     amountReceivedStroops: r.receivedStroops.toString(),
     amountRemaining: formatStroops(remainingStroops(r)),
     memo: r.memo,
+    ...numericReference(r),
     description: r.description,
     customerRef: r.customerRef,
     metadata: (r.metadata as Record<string, unknown> | null) ?? null,

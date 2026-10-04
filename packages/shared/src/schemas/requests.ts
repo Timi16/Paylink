@@ -71,6 +71,10 @@ export const RequestSchema = z.object({
   amountReceivedStroops: z.string(),
   amountRemaining: z.string(),
   memo: z.string(),
+  /** The memo as a number: usable as MEMO_ID when a text memo is not possible. */
+  memoId: z.string(),
+  /** Wallet + memoId as one M… address: pay here with no memo at all (contract wallets). */
+  muxedAddress: z.string(),
   description: z.string().nullable(),
   customerRef: z.string().nullable(),
   metadata: z.record(z.unknown()).nullable(),

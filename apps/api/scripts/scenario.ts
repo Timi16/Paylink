@@ -145,6 +145,7 @@ class Api {
 interface Req {
   id: string;
   memo: string;
+  muxedAddress: string;
   status: string;
   amountReceived: string;
   paidTxHash: string | null;
@@ -327,10 +328,10 @@ async function main(): Promise<void> {
     const hash = await submit(payer, [op], text(r.memo));
     await expectRequest(r.id, "PAID", hash, "COUNTED");
   });
-  await run("P15", "Soroban SAC transfer (contract-style payer) -> NO_MEMO, then assign", async () => {
+  await run("P15", "Soroban SAC transfer to the request's muxed address -> COUNTED, PAID", async () => {
     // Stands in for a contract wallet: the payment is a contract invocation of the asset
-    // contract's `transfer`. Soroban transactions cannot carry a memo, so the payment is
-    // detected, lands in Unmatched, and the merchant assigns it.
+    // contract's `transfer`. Soroban transactions cannot carry a memo, so the payer sends to
+    // the request's M… address and the mux id identifies the request.
     const sacId = USDC.contractId(PASSPHRASE);
     try {
       const deployer = await soroban.getAccount(keys.issuer.publicKey());
@@ -348,7 +349,7 @@ async function main(): Promise<void> {
     const r = await newRequest();
     const account = await soroban.getAccount(payer.publicKey());
     const tx = new TransactionBuilder(account, { fee: "10000000", networkPassphrase: PASSPHRASE })
-      .addOperation(new Contract(sacId).call("transfer", new Address(payer.publicKey()).toScVal(), new Address(wallet).toScVal(), nativeToScVal(50_000_000n, { type: "i128" })))
+      .addOperation(new Contract(sacId).call("transfer", new Address(payer.publicKey()).toScVal(), new Address(r.muxedAddress).toScVal(), nativeToScVal(50_000_000n, { type: "i128" })))
       .setTimeout(120)
       .build();
     const prepared = await soroban.prepareTransaction(tx);
@@ -356,8 +357,6 @@ async function main(): Promise<void> {
     const sent = await soroban.sendTransaction(prepared);
     if (sent.status === "ERROR") throw new Error(`sendTransaction rejected: ${JSON.stringify(sent.errorResult)}`);
     await soroban.pollTransaction(sent.hash, { attempts: 30 });
-    const payment = await expectUnmatched(sent.hash, "NO_MEMO");
-    await api.ok("POST", `/v1/payments/${payment.eventId}/assign`, { requestId: r.id });
     await expectRequest(r.id, "PAID", sent.hash, "COUNTED");
   });
   await run("P16", "payment to the wallet's M-address -> MEMO_TYPE_MISMATCH, then assign", async () => {

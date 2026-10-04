@@ -143,7 +143,7 @@ describe("checkout API", () => {
     const res = await request(t.app).get(`/public/pay/${req.publicId}`);
     expect(res.status).toBe(200);
     expect(Object.keys(res.body).sort()).toEqual(
-      ["amount", "amountReceived", "amountRemaining", "asset", "businessName", "canReceive", "cannotReceiveReason", "description", "expiresAt", "memo", "paidTxHash", "sep7Uri", "status", "wallet"].sort(),
+      ["amount", "amountReceived", "amountRemaining", "asset", "businessName", "canReceive", "cannotReceiveReason", "description", "expiresAt", "memo", "memoId", "muxedAddress", "paidTxHash", "sep7Uri", "status", "wallet"].sort(),
     );
     expect(res.body).toMatchObject({ businessName: "Acme Shop", amount: "50.0000000", wallet: wallet.address, memo: req.memo, status: "PENDING", canReceive: true, cannotReceiveReason: null });
     expect(res.body.sep7Uri).toContain(`destination=${wallet.address}`);

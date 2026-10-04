@@ -3,7 +3,7 @@ import { env } from "../../config/env";
 import type { AppDeps } from "../../deps";
 import { formatStroops } from "../../lib/amount";
 import { notFound } from "../../lib/errors";
-import { remainingStroops } from "../requests/serialize";
+import { numericReference, remainingStroops } from "../requests/serialize";
 import { OPEN_STATUSES } from "../transitions";
 import { checkCanReceive } from "../wallets/capability";
 import type { WalletService } from "../wallets/service";
@@ -78,6 +78,7 @@ export function createPublicService(deps: AppDeps, wallets: WalletService) {
         asset: { code: request.assetCode, issuer: request.assetIssuer },
         wallet: request.walletAddress,
         memo: request.memo,
+        ...numericReference(request),
         description: request.description,
         status: request.status,
         expiresAt: request.expiresAt.toISOString(),

@@ -1,7 +1,7 @@
 import type { ChainPayment, PaymentOutcome, PaymentRequest } from "@prisma/client";
 import { CHANNELS, notify } from "../db/notify";
 import type { Tx } from "../db/prisma";
-import { normalizeMemo } from "../lib/memo";
+import { idToMemo, normalizeMemo } from "../lib/memo";
 import {
   lockRequestByMemo,
   recordPartialPayment,
@@ -21,6 +21,7 @@ interface PaymentFacts {
   txHash: string;
   ledgerClosedAt: Date;
   toAddress: string;
+  walletId: string;
   assetCode: string;
   assetIssuer: string | null;
   amountStroops: bigint;
@@ -28,10 +29,12 @@ interface PaymentFacts {
 
 /** Wallet / asset / issuer checks, in the order the outcome table defines. */
 export function targetMismatch(
-  payment: Pick<PaymentFacts, "toAddress" | "assetCode" | "assetIssuer">,
-  req: Pick<PaymentRequest, "walletAddress" | "assetCode" | "assetIssuer">,
+  payment: Pick<PaymentFacts, "toAddress" | "walletId" | "assetCode" | "assetIssuer">,
+  req: Pick<PaymentRequest, "walletAddress" | "walletId" | "assetCode" | "assetIssuer">,
 ): "WRONG_WALLET" | "WRONG_ASSET" | "WRONG_ISSUER" | null {
-  if (req.walletAddress !== payment.toAddress) return "WRONG_WALLET";
+  // The wallet row must match too: an address can pass to another merchant after its first
+  // owner removes it, and money arriving then is not the old owner's.
+  if (req.walletAddress !== payment.toAddress || req.walletId !== payment.walletId) return "WRONG_WALLET";
   if (payment.assetCode !== req.assetCode) return "WRONG_ASSET";
   if ((payment.assetIssuer ?? null) !== (req.assetIssuer ?? null)) return "WRONG_ISSUER";
   return null;
@@ -133,13 +136,16 @@ export async function processPayment(
 
   if (payment.memoType === "none" || memoRaw === null || memoRaw === "") {
     outcome = "NO_MEMO";
-  } else if (payment.memoType !== "text") {
+  } else if (payment.memoType === "hash") {
     outcome = "MEMO_TYPE_MISMATCH";
   } else {
-    memoNormalized = normalizeMemo(memoRaw);
+    // Text memo, or the numeric form of one (MEMO_ID / muxed destination id).
+    memoNormalized = payment.memoType === "text" ? normalizeMemo(memoRaw) : idToMemo(memoRaw);
     const req = memoNormalized ? await lockRequestByMemo(tx, memoNormalized) : null;
     if (!req) {
-      outcome = "UNKNOWN_MEMO";
+      // A number that is no request's reference is just somebody's own MEMO_ID / mux id.
+      outcome = payment.memoType === "text" ? "UNKNOWN_MEMO" : "MEMO_TYPE_MISMATCH";
+      if (payment.memoType !== "text") memoNormalized = null;
     } else {
       requestId = req.id; // every outcome below shows on the request
       const facts: PaymentFacts = {
@@ -147,6 +153,7 @@ export async function processPayment(
         txHash: payment.txHash,
         ledgerClosedAt: payment.ledgerClosedAt,
         toAddress: payment.to,
+        walletId: wallet.id,
         assetCode: payment.assetCode,
         assetIssuer: payment.assetIssuer,
         amountStroops: payment.amountStroops,
@@ -172,6 +179,7 @@ export function paymentFacts(row: ChainPayment): PaymentFacts {
     txHash: row.txHash,
     ledgerClosedAt: row.ledgerClosedAt,
     toAddress: row.toAddress,
+    walletId: row.walletId,
     assetCode: row.assetCode,
     assetIssuer: row.assetIssuer,
     amountStroops: row.amountStroops,
