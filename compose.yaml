@@ -1,9 +1,9 @@
 # Postgres for PayLink on the server, in Docker. Only the database runs here; the API and
 # the worker run under pm2 and reach it on localhost.
 #
-#   POSTGRES_PASSWORD=<strong password> docker compose -f deploy/docker-compose.db.yml up -d
+#   docker compose up -d        (run from the repo root, next to .env)
 #
-# Then in .env:  DATABASE_URL=postgresql://paylink:<same password>@localhost:5434/paylink
+# The password comes from POSTGRES_PASSWORD in .env, which must match the one in DATABASE_URL.
 services:
   postgres:
     image: postgres:16-alpine

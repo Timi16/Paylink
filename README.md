@@ -68,11 +68,12 @@ to start on any network but testnet.
 ## Deploy
 
 **Backend (pm2).** The API and the worker are two pm2 processes from one build, defined in
-[ecosystem.config.cjs](ecosystem.config.cjs). On the server (Node 22+, pnpm, pm2, Postgres 16):
+[ecosystem.config.cjs](ecosystem.config.cjs). On the server (Node 22+, pnpm, pm2, Docker for Postgres):
 
 ```sh
 git clone <repo> ~/paylink && cd ~/paylink
-cp .env.example .env            # fill in: NODE_ENV=production, WEB_ORIGIN, SESSION_SECRET, DATABASE_URL
+cp .env.example .env            # fill in: NODE_ENV=production, WEB_ORIGIN, SESSION_SECRET, DATABASE_URL, POSTGRES_PASSWORD
+docker compose up -d            # Postgres in Docker (compose.yaml), on localhost:5434
 pnpm install --frozen-lockfile
 pnpm --filter @paylink/api db:deploy
 pnpm build
