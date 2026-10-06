@@ -41,6 +41,7 @@ export function serializeSession(s: Session, currentId: string): SessionDto {
     id: s.id,
     current: s.id === currentId,
     createdAt: s.createdAt.toISOString(),
+    lastSeenAt: s.lastSeenAt.toISOString(),
     expiresAt: s.expiresAt.toISOString(),
     ip: s.ip,
     userAgent: s.userAgent,

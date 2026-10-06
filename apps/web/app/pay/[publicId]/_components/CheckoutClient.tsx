@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { CopyButton } from "@/components/CopyButton";
 import { Icon, type AnyIcon } from "@/components/Icon";
 import { LogoMark } from "@/components/Logo";
-import { explorerTx } from "@/lib/config";
+import { explorerTx, HORIZON_URL } from "@/lib/config";
 import { countdown, formatAmount, formatDate, formatTime, initials, isPositive, shortAddress, shortHash, toStroops } from "@/lib/format";
 import { isOpen } from "@/lib/status";
 import type { Checkout } from "@/lib/types";
@@ -193,7 +193,16 @@ function Ready({ checkout, paidSeenAt, now, confirming, overdue, closing, onSent
             {initials(biz)}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-            <h1 style={{ fontSize: 16, fontWeight: 700, overflowWrap: "anywhere" }}>{biz}</h1>
+            <h1 style={{ fontSize: 16, fontWeight: 700, overflowWrap: "anywhere", display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {biz}
+              {checkout.walletVerified && (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--teal)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label="Wallet ownership verified" style={{ flexShrink: 0 }}>
+                  <title>{`${biz} proved it owns the wallet you are paying`}</title>
+                  <path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" />
+                  <path d="M9 12l2 2 4-4" />
+                </svg>
+              )}
+            </h1>
             {checkout.description && <span style={{ fontSize: 13, color: "var(--slate)", overflowWrap: "anywhere" }}>{checkout.description}</span>}
           </div>
         </div>
@@ -217,6 +226,7 @@ function Ready({ checkout, paidSeenAt, now, confirming, overdue, closing, onSent
               <span style={MONO}>{checkout.memo}</span>
             </Row>
             <Row label="Network">Stellar Testnet</Row>
+            {checkout.paidTxHash && <NetworkFee txHash={checkout.paidTxHash} />}
             {checkout.paidTxHash && (
               <Row label="Transaction">
                 <a
@@ -314,6 +324,33 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <span style={{ color: "var(--slate)" }}>{label}</span>
       <span style={{ textAlign: "right", minWidth: 0, overflowWrap: "anywhere" }}>{children}</span>
     </div>
+  );
+}
+
+/**
+ * The fee the paying transaction was actually charged, read from Stellar itself. Nothing is
+ * shown until (and unless) the real figure is known.
+ */
+function NetworkFee({ txHash }: { txHash: string }) {
+  const [fee, setFee] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${HORIZON_URL}/transactions/${txHash}`)
+      .then((res) => (res.ok ? (res.json() as Promise<{ fee_charged?: string | number }>) : null))
+      .then((tx) => {
+        const charged = tx?.fee_charged === undefined ? "" : String(tx.fee_charged);
+        if (!cancelled && /^\d{1,15}$/.test(charged)) setFee(formatAmount(fromStroops(BigInt(charged)), 5));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [txHash]);
+  if (!fee) return null;
+  return (
+    <Row label="Network fee">
+      <span style={MONO}>{fee} XLM</span>
+    </Row>
   );
 }
 

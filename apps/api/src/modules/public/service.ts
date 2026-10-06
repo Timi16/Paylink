@@ -78,6 +78,7 @@ export function createPublicService(deps: AppDeps, wallets: WalletService) {
         amountRemaining: formatStroops(remaining),
         asset: { code: request.assetCode, issuer: request.assetIssuer },
         wallet: request.walletAddress,
+        walletVerified: request.wallet.verifiedAt !== null,
         memo: request.memo,
         ...numericReference(request),
         description: request.description,

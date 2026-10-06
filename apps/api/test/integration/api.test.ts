@@ -221,6 +221,12 @@ describe("auth", () => {
     expect(list.body.data.filter((s: { current: boolean }) => s.current)).toHaveLength(1);
     expect(list.body.data.some((s: { userAgent: string }) => s.userAgent === "Mozilla/5.0 (iPhone)")).toBe(true);
     expect(JSON.stringify(list.body)).not.toMatch(/token/i);
+    // Last-active time: set at sign-in, then refreshed when the session is used after a while.
+    const mine = list.body.data.find((x: { current: boolean }) => x.current) as { id: string; lastSeenAt: string };
+    await prisma.session.update({ where: { id: mine.id }, data: { lastSeenAt: new Date(Date.now() - 3_600_000) } });
+    await m.agent.get("/auth/me");
+    const seen = (await prisma.session.findUniqueOrThrow({ where: { id: mine.id } })).lastSeenAt;
+    expect(Date.now() - seen.getTime()).toBeLessThan(10_000);
 
     const others = list.body.data.filter((s: { current: boolean }) => !s.current) as { id: string }[];
     expect((await m.agent.delete(`/auth/sessions/${others[0]!.id}`).set("Origin", ORIGIN)).status).toBe(204);

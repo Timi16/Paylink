@@ -5,7 +5,7 @@ import useSWR from "swr";
 import { Dialog } from "@/components/Dialog";
 import { useToast } from "@/components/Toast";
 import { api, errorMessage } from "@/lib/api";
-import { formatDate } from "@/lib/format";
+import { formatDate, timeAgo } from "@/lib/format";
 import type { Session } from "@/lib/types";
 import { describeDevice, DEVICE_ICON } from "./device";
 import { Section } from "./Section";
@@ -89,6 +89,7 @@ export function SessionsCard() {
                       {s.ip ? <span className="mono">{s.ip}</span> : null}
                       {s.ip ? " · " : null}
                       Signed in {formatDate(s.createdAt)}
+                      {s.current ? null : ` · active ${timeAgo(s.lastSeenAt)}`}
                     </span>
                   </div>
                   {s.current ? null : (

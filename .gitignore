@@ -11,3 +11,4 @@ apps/api/openapi.json
 .next
 next-env.d.ts
 *.tsbuildinfo
+apps/web/e2e/shots

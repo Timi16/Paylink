@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start --port 3000",
     "lint": "eslint app components lib",
-    "typecheck": "next typegen && tsc -p tsconfig.json"
+    "typecheck": "next typegen && tsc -p tsconfig.json",
+    "e2e": "node e2e/walkthrough.mjs && node e2e/freighter.mjs"
   },
   "dependencies": {
     "@paylink/shared": "workspace:*",
@@ -29,6 +30,7 @@
     "eslint": "*",
     "eslint-plugin-react-hooks": "*",
     "typescript": "^5.6.0",
-    "typescript-eslint": "*"
+    "typescript-eslint": "*",
+    "playwright-core": "^1.50.0"
   }
 }

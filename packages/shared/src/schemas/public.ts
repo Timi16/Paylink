@@ -15,6 +15,8 @@ export const CheckoutSchema = z.object({
   amountRemaining: z.string(),
   asset: AssetSchema,
   wallet: z.string(),
+  /** The business proved it controls this wallet by signing a challenge with it. */
+  walletVerified: z.boolean(),
   memo: z.string(),
   memoId: z.string(),
   muxedAddress: z.string(),

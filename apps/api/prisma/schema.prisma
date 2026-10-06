@@ -34,6 +34,7 @@ model Session {
   merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   expiresAt  DateTime
   createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now()) // refreshed at most every 5 minutes
   ip         String?
   userAgent  String?
 

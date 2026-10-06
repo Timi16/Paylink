@@ -36,6 +36,10 @@ async function fromSession(prisma: PrismaClient, token: string): Promise<AuthCon
     await prisma.session.deleteMany({ where: { id } }).catch(() => undefined);
     return null;
   }
+  // Throttled, like API keys: one write per session every five minutes at most.
+  if (Date.now() - row.lastSeenAt.getTime() > 5 * 60_000) {
+    await prisma.session.updateMany({ where: { id }, data: { lastSeenAt: new Date() } }).catch(() => undefined);
+  }
   return { merchantId: row.merchantId, via: "session", sessionId: id };
 }
 

@@ -374,7 +374,7 @@ Public (checkout)
 Method + path
 Success
 GET /public/pay/:publicId
-{ businessName, amount, amountReceived, amountRemaining, asset, wallet, memo, memoId, muxedAddress, description, status, expiresAt, paidTxHash, canReceive, cannotReceiveReason, sep7Uri }
+{ businessName, supportContact, amount, amountReceived, amountRemaining, asset, wallet, walletVerified, memo, memoId, muxedAddress, paidAt, description, status, expiresAt, paidTxHash, canReceive, cannotReceiveReason, sep7Uri }
 GET /public/pay/:publicId/events
 SSE status stream
 Other

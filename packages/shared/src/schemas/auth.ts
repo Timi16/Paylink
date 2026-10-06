@@ -73,6 +73,8 @@ export const SessionSchema = z.object({
   /** True for the session making this request. */
   current: z.boolean(),
   createdAt: z.string(),
+  /** Last request seen from this session (updated at most every few minutes). */
+  lastSeenAt: z.string(),
   expiresAt: z.string(),
   ip: z.string().nullable(),
   userAgent: z.string().nullable(),
