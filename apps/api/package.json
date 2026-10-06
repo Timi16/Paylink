@@ -53,7 +53,7 @@
     "supertest": "*",
     "tsup": "*",
     "tsx": "*",
-    "typescript": "^5.6.0",
+    "typescript": "^7.0.2",
     "typescript-eslint": "*",
     "vitest": "*"
   }
