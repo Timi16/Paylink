@@ -1,0 +1,32 @@
+# Postgres for PayLink on the server, in Docker. Only the database runs here; the API and
+# the worker run under pm2 and reach it on localhost.
+#
+#   POSTGRES_PASSWORD=<strong password> docker compose -f deploy/docker-compose.db.yml up -d
+#
+# Then in .env:  DATABASE_URL=postgresql://paylink:<same password>@localhost:5434/paylink
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: paylink-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: paylink
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: paylink
+    ports:
+      # Localhost only: never reachable from the internet. 5434 so it cannot clash with
+      # another Postgres already on 5432.
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - paylink-pg:/var/lib/postgresql/data
+    mem_limit: 384m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paylink -d paylink"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+volumes:
+  paylink-pg:
