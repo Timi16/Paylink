@@ -14,7 +14,7 @@ release() {
   git checkout --quiet --detach "$1"
   pnpm install --frozen-lockfile
   # Migrations are additive, so the previous build can still read the schema on rollback.
-  pnpm --filter @paylink/api exec prisma migrate deploy
+  pnpm --filter @paylink/api db:deploy   # reads DATABASE_URL from the repo-root .env
   pnpm --filter @paylink/api build
   pm2 reload ecosystem.config.cjs --update-env
   pm2 save

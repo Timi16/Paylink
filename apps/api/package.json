@@ -11,11 +11,12 @@
     "lint": "eslint src test scripts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "db:migrate": "prisma migrate dev",
-    "db:deploy": "prisma migrate deploy",
+    "db:migrate": "node --env-file-if-exists=../../.env node_modules/prisma/build/index.js migrate dev",
+    "db:deploy": "node --env-file-if-exists=../../.env node_modules/prisma/build/index.js migrate deploy",
     "openapi": "tsx src/openapi/generate.ts",
     "scenario": "tsx --env-file-if-exists=../../.env scripts/scenario.ts",
-    "seed": "tsx --env-file-if-exists=../../.env scripts/seed.ts"
+    "seed": "tsx --env-file-if-exists=../../.env scripts/seed.ts",
+    "db:status": "node --env-file-if-exists=../../.env node_modules/prisma/build/index.js migrate status"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^7.3.0",
