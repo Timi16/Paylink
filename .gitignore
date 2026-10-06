@@ -8,3 +8,6 @@ coverage
 .DS_Store
 apps/api/openapi.json
 .scenario-keys.json
+.next
+next-env.d.ts
+*.tsbuildinfo
