@@ -659,15 +659,17 @@ describe("platform", () => {
     expect(spec.body.openapi).toBe("3.0.3");
     const paths = Object.keys(spec.body.paths);
     for (const path of [
-      "/auth/signup", "/auth/login", "/auth/logout", "/auth/me", "/auth/password",
-      "/v1/api-keys", "/v1/api-keys/{id}",
-      "/v1/wallets", "/v1/wallets/{id}", "/v1/wallets/{id}/refresh", "/v1/wallets/{id}/challenge", "/v1/wallets/{id}/verify",
-      "/v1/payment-requests", "/v1/payment-requests/{id}", "/v1/payment-requests/{id}/cancel", "/v1/payment-requests/{id}/accept",
-      "/v1/payments", "/v1/payments/{eventId}/assign", "/v1/stream",
+      "/v1/payment-requests", "/v1/payment-requests/stats", "/v1/payment-requests/{id}", "/v1/payment-requests/{id}/cancel", "/v1/payment-requests/{id}/accept", "/v1/payment-requests/{id}/refunded",
+      "/v1/payments", "/v1/payments/{eventId}/assign", "/v1/payments/{eventId}/refunded", "/v1/summary",
       "/public/pay/{publicId}", "/public/pay/{publicId}/events", "/health",
     ]) {
       expect(paths, path).toContain(path);
     }
+    // The published reference is for API-key users: nothing that needs the dashboard session.
+    expect(paths.filter((p) => p.startsWith("/auth") || p.startsWith("/v1/api-keys") || p.startsWith("/v1/wallets") || p === "/v1/stream")).toEqual([]);
+    expect(Object.keys(spec.body.components.securitySchemes)).toEqual(["apiKey"]);
+    expect(JSON.stringify(spec.body)).not.toContain("pl_session");
+    expect(spec.body.servers[0].url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     expect(spec.body.components.schemas.PaymentRequest.properties.amount).toEqual({ type: "string" });
     const docs = await anon().get("/docs");
     expect(docs.status).toBe(200);

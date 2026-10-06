@@ -378,7 +378,7 @@ GET /public/pay/:publicId
 GET /public/pay/:publicId/events
 SSE status stream
 Other
-GET /v1/stream (session SSE) · GET /health · GET /openapi.json · GET /docs (Scalar).
+GET /v1/stream (session SSE) · GET /health · GET /openapi.json · GET /docs (Scalar). The published reference (/docs, /openapi.json) lists only what works with an API key, plus the public checkout and health routes; dashboard-only routes (auth, sessions, API keys, wallets, the merchant stream) are left out.
 Config, env vars and scripts
 config/env.ts validates everything at startup and stops the process with a clear message on any problem.
 Environment variables

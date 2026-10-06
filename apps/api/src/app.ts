@@ -106,8 +106,9 @@ export function buildApp(input: BuildAppDeps): BuiltApp {
   app.use("/health", healthRoutes(deps));
 
   let openApiDocument: ReturnType<typeof buildOpenApiDocument> | null = null;
-  app.get("/openapi.json", (_req, res) => {
-    openApiDocument ??= buildOpenApiDocument();
+  app.get("/openapi.json", (req, res) => {
+    // The server URL is this API as the caller reached it, so "try it" and the samples point here.
+    openApiDocument ??= buildOpenApiDocument(`${req.protocol}://${req.get("host") ?? "localhost"}`);
     res.json(openApiDocument);
   });
   app.use(
@@ -120,7 +121,18 @@ export function buildApp(input: BuildAppDeps): BuiltApp {
       );
       next();
     },
-    apiReference({ url: "/openapi.json" }),
+    apiReference({
+      url: "/openapi.json",
+      pageTitle: "PayLink API reference",
+      // A plain reference: no editor toolbar, AI assistant, MCP generator or usage telemetry.
+      showDeveloperTools: "never",
+      agent: { disabled: true },
+      mcp: { disabled: true },
+      telemetry: false,
+      hideClientButton: true,
+      defaultOpenAllTags: true,
+      authentication: { preferredSecurityScheme: "apiKey" },
+    }),
   );
 
   app.use(

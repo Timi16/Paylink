@@ -32,6 +32,12 @@ const ERROR_DESCRIPTIONS: Record<number, string> = {
   503: "Dependency unavailable",
 };
 
+/**
+ * The public API reference: what a developer can do with an API key, plus the open checkout
+ * and health routes. Dashboard-only routes (sign-in, sessions, API-key and wallet management,
+ * the dashboard's live stream) work only with the dashboard's session cookie, so they are
+ * left out of the published document.
+ */
 export function buildOpenApiDocument(serverUrl?: string) {
   const registry = new OpenAPIRegistry();
   registry.registerComponent("securitySchemes", "apiKey", {
@@ -39,18 +45,9 @@ export function buildOpenApiDocument(serverUrl?: string) {
     scheme: "bearer",
     description: "API key: `Authorization: Bearer pl_test_…`",
   });
-  registry.registerComponent("securitySchemes", "session", {
-    type: "apiKey",
-    in: "cookie",
-    name: "pl_session",
-    description: "Dashboard session cookie. State-changing requests must send Origin = the web origin.",
-  });
 
   const ErrorResponse = registry.register("Error", s.ErrorResponseSchema);
   const schemas = {
-    Merchant: registry.register("Merchant", s.MerchantSchema),
-    ApiKey: registry.register("ApiKey", s.ApiKeySchema),
-    Wallet: registry.register("Wallet", s.WalletSchema),
     PaymentRequest: registry.register("PaymentRequest", s.RequestSchema),
     ChainPayment: registry.register("ChainPayment", s.PaymentSchema),
     RequestEvent: registry.register("RequestEvent", s.RequestEventSchema),
@@ -59,6 +56,8 @@ export function buildOpenApiDocument(serverUrl?: string) {
   };
 
   const add = (spec: RouteSpec) => {
+    // Dashboard-only: not usable with an API key, so not part of the published reference.
+    if (spec.auth === "session" || spec.tag === "Auth") return;
     const responses: RouteConfig["responses"] = {};
     for (const [status, schema] of Object.entries(spec.success)) {
       responses[status] = schema
@@ -79,7 +78,7 @@ export function buildOpenApiDocument(serverUrl?: string) {
       description: spec.description,
       tags: [spec.tag],
       security:
-        spec.auth === "public" ? [] : spec.auth === "session" ? [{ session: [] }] : [{ apiKey: [] }, { session: [] }],
+        spec.auth === "public" ? [] : [{ apiKey: [] }],
       request: {
         ...(spec.params ? { params: spec.params } : {}),
         ...(spec.query ? { query: spec.query } : {}),
@@ -129,33 +128,53 @@ export function buildOpenApiDocument(serverUrl?: string) {
     description: "Returns 201 for a new request. With an Idempotency-Key that was already used, returns the original request with 200, or 409 IDEMPOTENCY_MISMATCH if the body differs.",
   });
   add({ method: "get", path: "/v1/payment-requests", summary: "List payment requests", tag: "Payment requests", auth: "any", query: s.ListRequestsQuery, success: { 200: s.RequestListResponse }, errors: [400] });
-  add({ method: "get", path: "/v1/payment-requests/{id}", summary: "Request with every linked payment and its audit trail", tag: "Payment requests", auth: "any", params: s.IdParamsSchema, success: { 200: s.RequestDetailResponse }, errors: [404] });
-  add({ method: "post", path: "/v1/payment-requests/{id}/cancel", summary: "Cancel a PENDING request", tag: "Payment requests", auth: "any", params: s.IdParamsSchema, success: { 200: s.RequestResponse }, errors: [403, 404, 409] });
-  add({ method: "post", path: "/v1/payment-requests/{id}/accept", summary: "Accept as PAID: an UNDERPAID request, an EXPIRED one with a late payment, or a CANCELLED one with a payment after the cancel", tag: "Payment requests", auth: "any", params: s.IdParamsSchema, success: { 200: s.RequestResponse }, errors: [403, 404, 409] });
+  add({ method: "get", path: "/v1/payment-requests/{id}", summary: "Get a payment request", description: "The request with every payment linked to it (whatever the outcome) and its history.", tag: "Payment requests", auth: "any", params: s.IdParamsSchema, success: { 200: s.RequestDetailResponse }, errors: [404] });
+  add({ method: "post", path: "/v1/payment-requests/{id}/cancel", summary: "Cancel a payment request", description: "Only a PENDING request can be cancelled.", tag: "Payment requests", auth: "any", params: s.IdParamsSchema, success: { 200: s.RequestResponse }, errors: [403, 404, 409] });
+  add({ method: "post", path: "/v1/payment-requests/{id}/accept", summary: "Accept as paid", description: "Marks the request PAID for what was received: an UNDERPAID request, an EXPIRED one with a late payment, or a CANCELLED one with a payment that arrived after the cancel.", tag: "Payment requests", auth: "any", params: s.IdParamsSchema, success: { 200: s.RequestResponse }, errors: [403, 404, 409] });
 
-  add({ method: "get", path: "/v1/payment-requests/stats", summary: "Request counts per status, under the list's filters", tag: "Payment requests", auth: "any", query: s.RequestStatsQuery, success: { 200: s.RequestStatsResponse }, errors: [400] });
-  add({ method: "post", path: "/v1/payment-requests/{id}/refunded", summary: "Record that you sent back what the request itself owed (excess, or money counted before it closed)", tag: "Payment requests", auth: "any", params: s.IdParamsSchema, body: s.MarkRefundedBody, success: { 200: s.RequestResponse }, errors: [400, 403, 404, 409] });
-  add({ method: "get", path: "/v1/summary", summary: "Overview numbers since a point in time", tag: "Payment requests", auth: "any", query: s.SummaryQuery, success: { 200: s.SummaryResponse }, errors: [400] });
+  add({ method: "get", path: "/v1/payment-requests/stats", summary: "Count requests by status", description: "Counts per status under the same filters as the list.", tag: "Payment requests", auth: "any", query: s.RequestStatsQuery, success: { 200: s.RequestStatsResponse }, errors: [400] });
+  add({ method: "post", path: "/v1/payment-requests/{id}/refunded", summary: "Mark a request refunded", description: "Records that you sent back what the request itself owed: the excess over the amount asked, or money counted before it closed. PayLink never moves funds; this only records it.", tag: "Payment requests", auth: "any", params: s.IdParamsSchema, body: s.MarkRefundedBody, success: { 200: s.RequestResponse }, errors: [400, 403, 404, 409] });
+  add({ method: "get", path: "/v1/summary", summary: "Get an overview", description: "Collected per asset, requests created and settled, open requests, and what needs attention, since `from`.", tag: "Payment requests", auth: "any", query: s.SummaryQuery, success: { 200: s.SummaryResponse }, errors: [400] });
 
   // Payments
-  add({ method: "post", path: "/v1/payments/{eventId}/refunded", summary: "Record that you sent a payment back to its payer", tag: "Payments", auth: "any", params: s.EventIdParamsSchema, body: s.MarkRefundedBody, success: { 200: s.PaymentResponse }, errors: [400, 403, 404, 409] });
-  add({ method: "get", path: "/v1/payments", summary: "List detected payments (use unmatched=true for the Unmatched list)", tag: "Payments", auth: "any", query: s.ListPaymentsQuery, success: { 200: s.PaymentListResponse }, errors: [400] });
-  add({ method: "post", path: "/v1/payments/{eventId}/assign", summary: "Assign an unmatched payment to a request", tag: "Payments", auth: "any", params: s.EventIdParamsSchema, body: s.AssignPaymentBody, success: { 200: s.AssignResponse }, errors: [400, 403, 404, 409] });
+  add({ method: "post", path: "/v1/payments/{eventId}/refunded", summary: "Mark a payment refunded", description: "Records that you sent a payment back to its payer. Not for payments that were applied to a request. PayLink never moves funds.", tag: "Payments", auth: "any", params: s.EventIdParamsSchema, body: s.MarkRefundedBody, success: { 200: s.PaymentResponse }, errors: [400, 403, 404, 409] });
+  add({ method: "get", path: "/v1/payments", summary: "List payments", description: "Every payment that reached your wallets. Use `unmatched=true` for the ones that could not be tied to a request.", tag: "Payments", auth: "any", query: s.ListPaymentsQuery, success: { 200: s.PaymentListResponse }, errors: [400] });
+  add({ method: "post", path: "/v1/payments/{eventId}/assign", summary: "Assign a payment", description: "Ties an unmatched payment to one of your requests on the same wallet and asset.", tag: "Payments", auth: "any", params: s.EventIdParamsSchema, body: s.AssignPaymentBody, success: { 200: s.AssignResponse }, errors: [400, 403, 404, 409] });
 
   // Live + public
   add({ method: "get", path: "/v1/stream", summary: "Merchant live stream (SSE): request.updated, payment.detected, wallet.updated", tag: "Live", auth: "session", success: { 200: sse } });
-  add({ method: "get", path: "/public/pay/{publicId}", summary: "Checkout data for a payment link", tag: "Public checkout", auth: "public", params: s.PublicIdParamsSchema, success: { 200: schemas.Checkout }, errors: [404] });
-  add({ method: "get", path: "/public/pay/{publicId}/events", summary: "Checkout status stream (SSE `status` events)", tag: "Public checkout", auth: "public", params: s.PublicIdParamsSchema, success: { 200: sse }, errors: [404] });
-  add({ method: "get", path: "/health", summary: "Health: DB, last processed ledger, lag, open requests", tag: "System", auth: "public", success: { 200: schemas.Health }, errors: [503] });
+  add({ method: "get", path: "/public/pay/{publicId}", summary: "Get checkout data", tag: "Public checkout", auth: "public", params: s.PublicIdParamsSchema, success: { 200: schemas.Checkout }, errors: [404] });
+  add({ method: "get", path: "/public/pay/{publicId}/events", summary: "Stream checkout status", description: "Server-Sent Events: a `status` event on connect and on every change.", tag: "Public checkout", auth: "public", params: s.PublicIdParamsSchema, success: { 200: sse }, errors: [404] });
+  add({ method: "get", path: "/health", summary: "Health", description: "Database status, last processed ledger, lag in seconds and open request count.", tag: "System", auth: "public", success: { 200: schemas.Health }, errors: [503] });
 
   return new OpenApiGeneratorV3(registry.definitions).generateDocument({
     openapi: "3.0.3",
     info: {
       title: "PayLink API",
       version: "1.0.0",
-      description:
-        "Payment requests on Stellar Testnet. No real money. Amounts are decimal strings (7 decimals) with stroops alongside. Errors share one shape: `{ error: { code, message, details, requestId } }`.",
+      description: [
+        "Create payment requests on **Stellar Testnet** and find out the moment they are paid. No real money moves.",
+        "",
+        "## Getting started",
+        "1. In the PayLink dashboard, add and verify the wallet you want to be paid into, and copy its id.",
+        "2. Create an API key under **API keys**. It is shown once; keep it on your server.",
+        "3. Send it on every request: `Authorization: Bearer pl_test_…`.",
+        "4. `POST /v1/payment-requests` and send your customer to the `checkoutUrl` in the response.",
+        "",
+        "## Conventions",
+        "- **Amounts** are decimal strings with up to 7 decimals (`\"50\"`, `\"0.5\"`); responses also carry the exact value in stroops.",
+        "- **Idempotency**: send an `Idempotency-Key` header when creating a request so a retry never creates a second one.",
+        "- **Errors** share one shape: `{ error: { code, message, details, requestId } }`.",
+        "- **Pagination**: lists take `limit` and `cursor` and return `{ data, nextCursor }`.",
+        "- **Rate limit**: 300 requests a minute per account; a 429 carries `Retry-After`.",
+      ].join("\n"),
     },
+    tags: [
+      { name: "Payment requests", description: "Create a request, follow it, cancel it, or accept what was paid." },
+      { name: "Payments", description: "Everything that reached your wallets, including payments that could not be matched." },
+      { name: "Public checkout", description: "What the hosted checkout page reads. No API key needed." },
+      { name: "System" },
+    ],
     servers: serverUrl ? [{ url: serverUrl }] : [],
   });
 }
