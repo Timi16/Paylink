@@ -36,6 +36,12 @@ fi
 echo "health check failed; rolling back to $PREVIOUS" >&2
 git checkout --quiet --detach "$PREVIOUS"
 pnpm install --frozen-lockfile
-pnpm --filter @paylink/api build
+pnpm build
 pm2 reload ecosystem.config.cjs --update-env
+# pm2 backs off after a crash loop, so the old version can take a few seconds to come up.
+if healthy; then
+  echo "rolled back to $PREVIOUS and healthy again" >&2
+else
+  echo "ROLLBACK DID NOT RECOVER: $HEALTH_URL is still failing. Check: pm2 logs paylink-api" >&2
+fi
 exit 1
