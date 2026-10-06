@@ -24,6 +24,7 @@ the worker detects and verifies the payment and flips the request to Paid.
 ## Layout
 
 - `apps/api` — one codebase, two processes: `src/server.ts` (API) and `src/worker.ts` (ingestion, reconciliation, watchdog, expiry sweeper).
+- `apps/web` — Next.js app: landing, auth, dashboard, public checkout (`/pay/[publicId]`). Design system: `apps/web/DESIGN.md`. Amounts stay decimal strings; `parseFloat`/`Number()` are banned there too.
 - `packages/shared` — Zod schemas and types shared with the web app.
 - `apps/api/scripts` — `scenario.ts` (testnet end-to-end), `seed.ts`; `scripts/chaos.sh`.
 - Layering: routes → service → repo. Repos that touch merchant data take `merchantId` first.

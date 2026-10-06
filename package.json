@@ -7,6 +7,7 @@
   },
   "scripts": {
     "dev": "pnpm --filter @paylink/api dev",
+    "dev:web": "pnpm --filter @paylink/web dev",
     "dev:worker": "pnpm --filter @paylink/api dev:worker",
     "build": "pnpm --filter @paylink/api build",
     "lint": "pnpm -r lint",

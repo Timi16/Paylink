@@ -6,7 +6,7 @@ verifies the payment. Wrong, partial, duplicate, late and expired payments are a
 recognised and shown, never silently ignored. PayLink is non-custodial: it never holds a
 secret key or moves funds.
 
-The spec lives in [docs/](docs/). This repo currently contains the backend.
+The spec lives in [docs/](docs/). `apps/api` is the backend (API + worker); `apps/web` is the Next.js dashboard and checkout.
 
 ## Run it locally
 
@@ -21,6 +21,23 @@ pnpm dev                        # API on :4100  (reference at /docs)
 pnpm dev:worker                 # ingestion, reconciliation, watchdog, expiry sweeper
 pnpm seed                       # optional demo data: demo@paylink.test / demo-password-123
 ```
+
+## Web app
+
+`apps/web` is the Next.js app: landing page, sign-up and sign-in, the merchant dashboard and the
+public checkout at `/pay/{publicId}`. Its design system is in [apps/web/DESIGN.md](apps/web/DESIGN.md).
+
+```sh
+cp apps/web/.env.example apps/web/.env.local   # point NEXT_PUBLIC_API_URL at the API
+pnpm --filter @paylink/web dev                 # http://localhost:3000
+```
+
+The API only accepts the dashboard from `WEB_ORIGIN` (CORS and the CSRF check), so that value in
+`.env` must be exactly the origin the web app is served from. In production the web app and the API
+must share a registrable domain (e.g. `paylink.example.com` and `api.paylink.example.com`) so the
+session cookie is sent. Wallet verification and "Pay with Freighter" need the Freighter browser
+extension set to Testnet. Password reset emails need `SMTP_URL`; in development the email is printed
+in the API log instead.
 
 ## Checks
 
