@@ -271,8 +271,18 @@ POST /auth/password
 currentPassword, newPassword
 204; other sessions deleted
 POST /auth/settings
-autoMatchByAmount
+any of businessName, supportContact, defaultWalletId, defaultExpiryMinutes, autoMatchByAmount
 200 { merchant }
+POST /auth/password/forgot
+email
+204 always (emails a one-hour, single-use link to {WEB_ORIGIN}/reset-password?token=…; 503 if SMTP_URL is not set in production)
+POST /auth/password/reset
+token, newPassword
+204; every session deleted
+GET /auth/sessions · DELETE /auth/sessions/:id · POST /auth/sessions/logout-others
+—
+Where the merchant is signed in; sign one or all others out
+POST /auth/login also takes remember (default true: 14 days; false: browser-session cookie, one day)
 API keys (session)
 GET /v1/api-keys · POST /v1/api-keys { name } → 201 { apiKey, key: "pl_test_…" } (full key shown once) · DELETE /v1/api-keys/:id → 204.
 Wallets (session)
@@ -343,8 +353,20 @@ Method + path
 Query / body
 Success
 GET /v1/payments
-walletId, outcome, unmatched=true, cursor, limit
+walletId, outcome, unmatched=true (excludes ones marked refunded), from, to (ledger close time), cursor, limit
 { data: ChainPayment[], nextCursor }
+POST /v1/payments/:eventId/refunded
+txHash?
+{ payment }; records that the merchant sent it back (not for applied payments)
+POST /v1/payment-requests/:id/refunded
+txHash?
+{ request }; records that the merchant sent back the request's own excess or counted money
+GET /v1/payment-requests/stats
+walletId, from, to, q
+{ total, byStatus }
+GET /v1/summary
+from
+Overview numbers: collected per asset, requests created/settled, open requests, unmatched and refunds
 POST /v1/payments/:eventId/assign
 requestId
 { payment, request }; 409 if not an unmatched outcome, or wallet/asset differ
@@ -405,6 +427,10 @@ SESSION_SECRET
 64 hex chars
 api
 ≥ 32 bytes
+SMTP_URL, MAIL_FROM
+
+api
+Optional; password reset email. Without SMTP_URL: printed to the log in development, off in production
 ALERT_TELEGRAM_BOT_TOKEN, ALERT_TELEGRAM_CHAT_ID
 
 worker

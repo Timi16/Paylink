@@ -82,6 +82,8 @@ export const RequestSchema = z.object({
   paidAt: z.string().nullable(),
   paidTxHash: z.string().nullable(),
   cancelledAt: z.string().nullable(),
+  /** Set when the merchant recorded that they sent back what this request owed (excess, or money counted before it closed). */
+  refundedAt: z.string().nullable(),
   /** True when `refundDue` holds an amount of at least 0.01 of some asset. */
   refundOwed: z.boolean(),
   /**
@@ -125,6 +127,9 @@ export const PaymentSchema = z.object({
   suggestedRequestId: z.string().nullable(),
   assignedManually: z.boolean(),
   assignedAt: z.string().nullable(),
+  /** Set when the merchant recorded that they sent this payment back. */
+  refundedAt: z.string().nullable(),
+  refundTxHash: z.string().nullable(),
   createdAt: z.string(),
 });
 export type ChainPayment = z.infer<typeof PaymentSchema>;
@@ -139,6 +144,47 @@ export const RequestEventSchema = z.object({
   createdAt: z.string(),
 });
 export type RequestEvent = z.infer<typeof RequestEventSchema>;
+
+/** Body of the two "mark as refunded" endpoints. PayLink never sends money; this only records it. */
+export const MarkRefundedBody = z
+  .object({ txHash: z.string().trim().toLowerCase().regex(/^[0-9a-f]{64}$/, "A transaction hash is 64 hex characters").optional() })
+  .strict();
+export type MarkRefundedBody = z.infer<typeof MarkRefundedBody>;
+
+export const RequestStatsQuery = z
+  .object({
+    walletId: IdSchema.optional(),
+    from: z.string().datetime({ offset: true }).optional(),
+    to: z.string().datetime({ offset: true }).optional(),
+    q: z.string().trim().min(1).max(64).optional(),
+  })
+  .strict();
+export type RequestStatsQuery = z.infer<typeof RequestStatsQuery>;
+
+/** Counts for the status filter chips: the same filters as the list, minus status. */
+export const RequestStatsResponse = z.object({ total: z.number(), byStatus: z.record(z.enum(REQUEST_STATUSES), z.number()) });
+export type RequestStats = z.infer<typeof RequestStatsResponse>;
+
+export const SummaryQuery = z.object({ from: z.string().datetime({ offset: true }) }).strict();
+const AssetAmount = z.object({ asset: AssetSchema, amount: z.string(), amountStroops: z.string() });
+/** GET /v1/summary: the numbers behind the dashboard overview. */
+export const SummaryResponse = z.object({
+  from: z.string(),
+  /** Payments applied to requests since `from`, per asset. */
+  collected: z.array(AssetAmount.extend({ payments: z.number() })),
+  /** Requests created since `from`, and how many of those are paid. */
+  requests: z.object({ created: z.number(), settled: z.number() }),
+  /** Requests still open right now. */
+  open: z.object({ count: z.number(), underpaid: z.number(), nextExpiresAt: z.string().nullable() }),
+  needsYou: z.object({
+    /** Payments waiting to be assigned or refunded. */
+    unmatched: z.number(),
+    /** Requests with a refund still to send. */
+    refunds: z.number(),
+    refundRequests: z.array(RequestSchema),
+  }),
+});
+export type Summary = z.infer<typeof SummaryResponse>;
 
 export const RequestResponse = z.object({ request: RequestSchema });
 export const RequestCreatedResponse = z.object({ request: RequestSchema, checkoutUrl: z.string() });

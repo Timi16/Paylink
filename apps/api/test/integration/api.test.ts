@@ -164,9 +164,125 @@ describe("auth", () => {
     expect(on.status).toBe(200);
     expect(on.body.merchant.autoMatchByAmount).toBe(true);
     expect((await m.agent.post("/auth/settings").set("Origin", ORIGIN).send({ autoMatchByAmount: "yes" })).status).toBe(400);
-    expect((await m.agent.post("/auth/settings").set("Origin", ORIGIN).send({ businessName: "x" })).status).toBe(400);
+    expect((await m.agent.post("/auth/settings").set("Origin", ORIGIN).send({})).status).toBe(400);
+    expect((await m.agent.post("/auth/settings").set("Origin", ORIGIN).send({ email: "new@x.example" })).status).toBe(400);
     expect((await m.agent.post("/auth/settings").send({ autoMatchByAmount: false })).status).toBe(403);
     expect((await anon().post("/auth/settings").set("Origin", ORIGIN).send({ autoMatchByAmount: false })).status).toBe(401);
+  });
+
+  it("merchant settings: business name, support contact and request defaults", async () => {
+    const { merchant, wallet } = await setupMerchant(t, "Old Name");
+    const save = (body: object) => merchant.agent.post("/auth/settings").set("Origin", ORIGIN).send(body);
+    const res = await save({ businessName: "  Ada's Kitchen ", supportContact: "+234 801 234 5678", defaultExpiryMinutes: 60, defaultWalletId: wallet.id });
+    expect(res.status).toBe(200);
+    expect(res.body.merchant).toMatchObject({ businessName: "Ada's Kitchen", supportContact: "+234 801 234 5678", defaultExpiryMinutes: 60, defaultWalletId: wallet.id, autoMatchByAmount: false });
+    // The checkout shows the new name and how to reach the business.
+    const req = await createRequest(merchant, wallet);
+    const checkout = await anon().get(`/public/pay/${req.publicId}`);
+    expect(checkout.body).toMatchObject({ businessName: "Ada's Kitchen", supportContact: "+234 801 234 5678" });
+    expect((await save({ supportContact: null })).body.merchant.supportContact).toBeNull();
+
+    for (const bad of [{ businessName: "" }, { defaultExpiryMinutes: 4 }, { defaultExpiryMinutes: 43_201 }, { supportContact: "x".repeat(101) }, { defaultWalletId: "../x" }]) {
+      expect((await save(bad)).status, JSON.stringify(bad)).toBe(400);
+    }
+    // The default wallet must be one of the merchant's own, live wallets.
+    const other = await setupMerchant(t, "Other");
+    expect((await save({ defaultWalletId: other.wallet.id })).status).toBe(404);
+    // Removing the default wallet clears the default.
+    await merchant.agent.delete(`/v1/wallets/${wallet.id}`).set("Origin", ORIGIN);
+    expect((await merchant.agent.get("/auth/me")).body.merchant.defaultWalletId).toBeNull();
+    expect((await save({ defaultWalletId: wallet.id })).status).toBe(404);
+  });
+
+  it("'keep me logged in' unticked gives a browser-session cookie and a one-day session", async () => {
+    await anon().post("/auth/signup").set("Origin", ORIGIN).send(creds);
+    await prisma.session.deleteMany();
+    const short = await anon().post("/auth/login").set("Origin", ORIGIN).send({ email: creds.email, password: creds.password, remember: false });
+    expect(short.status).toBe(200);
+    const cookie = (short.headers["set-cookie"] as unknown as string[]).find((c) => c.startsWith("pl_session=")) as string;
+    expect(cookie).not.toMatch(/Max-Age|Expires/i);
+    const session = await prisma.session.findFirstOrThrow();
+    const hours = (session.expiresAt.getTime() - Date.now()) / 3_600_000;
+    expect(hours).toBeGreaterThan(23);
+    expect(hours).toBeLessThanOrEqual(24);
+    const long = await anon().post("/auth/login").set("Origin", ORIGIN).send({ email: creds.email, password: creds.password, remember: true });
+    expect(String(long.headers["set-cookie"])).toMatch(/pl_session=[^;]+; Max-Age=1209600/);
+  });
+
+  it("sessions: lists where you're signed in, signs one out, and signs out everywhere else", async () => {
+    const m = await signup(t);
+    const login = () => request.agent(t.app).post("/auth/login").set("Origin", ORIGIN).set("User-Agent", "Mozilla/5.0 (iPhone)").send({ email: m.email, password: m.password });
+    const phoneAgent = request.agent(t.app);
+    await phoneAgent.post("/auth/login").set("Origin", ORIGIN).set("User-Agent", "Mozilla/5.0 (iPhone)").send({ email: m.email, password: m.password });
+    await login();
+    const list = await m.agent.get("/auth/sessions");
+    expect(list.status).toBe(200);
+    expect(list.body.data).toHaveLength(3);
+    expect(list.body.data.filter((s: { current: boolean }) => s.current)).toHaveLength(1);
+    expect(list.body.data.some((s: { userAgent: string }) => s.userAgent === "Mozilla/5.0 (iPhone)")).toBe(true);
+    expect(JSON.stringify(list.body)).not.toMatch(/token/i);
+
+    const others = list.body.data.filter((s: { current: boolean }) => !s.current) as { id: string }[];
+    expect((await m.agent.delete(`/auth/sessions/${others[0]!.id}`).set("Origin", ORIGIN)).status).toBe(204);
+    expect((await m.agent.delete(`/auth/sessions/${others[0]!.id}`).set("Origin", ORIGIN)).status).toBe(404);
+    expect((await m.agent.delete("/auth/sessions/not-a-session").set("Origin", ORIGIN)).status).toBe(400);
+    expect((await m.agent.delete(`/auth/sessions/${others[1]!.id}`)).status).toBe(403); // CSRF guard
+
+    // Another merchant cannot see or end these sessions.
+    const stranger = await signup(t);
+    expect((await stranger.agent.get("/auth/sessions")).body.data).toHaveLength(1);
+    expect((await stranger.agent.delete(`/auth/sessions/${others[1]!.id}`).set("Origin", ORIGIN)).status).toBe(404);
+
+    expect((await m.agent.post("/auth/sessions/logout-others").set("Origin", ORIGIN)).status).toBe(204);
+    expect((await m.agent.get("/auth/sessions")).body.data).toMatchObject([{ current: true }]);
+    expect((await phoneAgent.get("/auth/me")).status).toBe(401);
+    expect((await m.agent.get("/auth/me")).status).toBe(200);
+    expect((await anon().get("/auth/sessions")).status).toBe(401);
+  });
+
+  it("password reset: a one-hour, single-use emailed link that signs out everywhere", async () => {
+    const m = await signup(t);
+    t.mailer.sent.length = 0;
+    const forgot = (email: string) => anon().post("/auth/password/forgot").set("Origin", ORIGIN).send({ email });
+    // Unknown address: the same answer, and no email.
+    expect((await forgot("nobody@nowhere.example")).status).toBe(204);
+    expect(t.mailer.sent).toHaveLength(0);
+    expect((await forgot(m.email.toUpperCase())).status).toBe(204);
+    expect(t.mailer.sent).toHaveLength(1);
+    expect(t.mailer.sent[0]).toMatchObject({ to: m.email, subject: "Reset your PayLink password" });
+    const token = /reset-password\?token=([A-Za-z0-9_-]+)/.exec(t.mailer.sent[0]!.text)?.[1] as string;
+    expect(t.mailer.sent[0]!.text).toContain(`${ORIGIN}/reset-password?token=${token}`);
+    // Only a hash of the token is stored.
+    expect(await prisma.passwordReset.findUnique({ where: { id: token } })).toBeNull();
+    // Asking again straight away does not send a second email.
+    expect((await forgot(m.email)).status).toBe(204);
+    expect(t.mailer.sent).toHaveLength(1);
+
+    const reset = (body: object) => anon().post("/auth/password/reset").set("Origin", ORIGIN).send(body);
+    expect((await reset({ token, newPassword: "short" })).status).toBe(400);
+    expect((await reset({ token: "x".repeat(43), newPassword: "a whole new password" })).body.error.code).toBe("CHALLENGE_EXPIRED");
+    expect((await reset({ token, newPassword: "a whole new password" })).status).toBe(204);
+    // Used once: it cannot be replayed.
+    expect((await reset({ token, newPassword: "another new password" })).status).toBe(400);
+    // Every session is gone; the old password no longer works; the new one does.
+    expect((await m.agent.get("/auth/me")).status).toBe(401);
+    expect((await anon().post("/auth/login").set("Origin", ORIGIN).send({ email: m.email, password: m.password })).status).toBe(401);
+    expect((await anon().post("/auth/login").set("Origin", ORIGIN).send({ email: m.email, password: "a whole new password" })).status).toBe(200);
+
+    // An expired link is refused.
+    await prisma.passwordReset.deleteMany();
+    await forgot(m.email);
+    const second = /token=([A-Za-z0-9_-]+)/.exec(t.mailer.sent.at(-1)!.text)?.[1] as string;
+    await prisma.passwordReset.updateMany({ data: { expiresAt: new Date(Date.now() - 1000) } });
+    expect((await reset({ token: second, newPassword: "yet another password" })).body.error.code).toBe("CHALLENGE_EXPIRED");
+    expect((await anon().post("/auth/password/forgot").send({ email: m.email })).status).toBe(403); // CSRF guard
+  });
+
+  it("password reset says so plainly when email is not set up", async () => {
+    const noMail = makeApp({}, { mailer: null });
+    const res = await request(noMail.app).post("/auth/password/forgot").set("Origin", ORIGIN).send({ email: "a@b.example" });
+    expect(res.status).toBe(503);
+    expect(res.body.error.code).toBe("SERVICE_UNAVAILABLE");
   });
 
   it("logout ends the session; me requires one; expired sessions are refused", async () => {
@@ -309,6 +425,82 @@ describe("listing", () => {
     }
   });
 
+  it("request stats count per status under the list's filters; search also matches the description", async () => {
+    const { merchant, wallet } = await setupMerchant(t);
+    const a = await createRequest(merchant, wallet, { description: "Party jollof tray", customerRef: "ord-1" });
+    await createRequest(merchant, wallet, { description: "Zobo, 6 bottles", customerRef: "ord-2" });
+    const c = await createRequest(merchant, wallet, { description: "Jollof rice for four" });
+    await merchant.agent.post(`/v1/payment-requests/${c.id}/cancel`).set("Origin", ORIGIN);
+    const e = makeEngine();
+    await e.ingestion.tick();
+    await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: a.memo });
+
+    const all = await merchant.agent.get("/v1/payment-requests/stats");
+    expect(all.status).toBe(200);
+    expect(all.body).toEqual({ total: 3, byStatus: { PENDING: 1, UNDERPAID: 0, PAID: 1, OVERPAID: 0, EXPIRED: 0, CANCELLED: 1, NETWORK_RESET: 0 } });
+    const jollof = await merchant.agent.get("/v1/payment-requests/stats?q=jollof");
+    expect(jollof.body).toMatchObject({ total: 2, byStatus: { PAID: 1, CANCELLED: 1, PENDING: 0 } });
+    expect((await merchant.agent.get("/v1/payment-requests?q=JOLLOF")).body.data).toHaveLength(2);
+    const future = encodeURIComponent(new Date(Date.now() + 60_000).toISOString());
+    expect((await merchant.agent.get(`/v1/payment-requests/stats?from=${future}`)).body.total).toBe(0);
+    expect((await merchant.agent.get("/v1/payment-requests/stats?status=PAID")).status).toBe(400);
+    // Another merchant's requests are never counted.
+    const other = await setupMerchant(t, "Other");
+    expect((await other.merchant.agent.get("/v1/payment-requests/stats")).body.total).toBe(0);
+  });
+
+  it("summary: collected per asset, requests settled, open requests and what needs the merchant", async () => {
+    const { merchant, wallet } = await setupMerchant(t);
+    const e = makeEngine();
+    await e.ingestion.tick();
+    const from = encodeURIComponent(new Date(Date.now() - 3_600_000).toISOString());
+    const get = () => merchant.agent.get(`/v1/summary?from=${from}`);
+    expect((await get()).body).toMatchObject({ collected: [], requests: { created: 0, settled: 0 }, open: { count: 0, underpaid: 0, nextExpiresAt: null }, needsYou: { unmatched: 0, refunds: 0, refundRequests: [] } });
+
+    const paid = await createRequest(merchant, wallet);
+    const part = await createRequest(merchant, wallet, { amount: "120", expiresInMinutes: 10 });
+    await createRequest(merchant, wallet, { amount: "9" });
+    const xlm = await createRequest(merchant, wallet, { asset: "XLM", amount: "5" });
+    await e.pay([
+      { to: wallet.address, amountStroops: USDC(50), memoRaw: paid.memo },
+      { to: wallet.address, amountStroops: USDC(100), memoRaw: part.memo },
+      { to: wallet.address, amountStroops: 50_000_000n, memoRaw: xlm.memo, assetCode: "XLM", assetIssuer: null },
+      { to: wallet.address, amountStroops: USDC(15) }, // no memo
+      { to: wallet.address, amountStroops: USDC(50), memoRaw: paid.memo }, // duplicate: refund owed
+    ]);
+    const res = await get();
+    expect(res.status).toBe(200);
+    const byCode = Object.fromEntries(res.body.collected.map((c: { asset: { code: string }; amount: string; payments: number }) => [c.asset.code, [c.amount, c.payments]]));
+    expect(byCode).toEqual({ USDC: ["150.0000000", 2], XLM: ["5.0000000", 1] });
+    expect(res.body.requests).toEqual({ created: 4, settled: 2 });
+    expect(res.body.open).toMatchObject({ count: 2, underpaid: 1 });
+    expect(new Date(res.body.open.nextExpiresAt).getTime()).toBeLessThan(Date.now() + 11 * 60_000);
+    expect(res.body.needsYou).toMatchObject({ unmatched: 1, refunds: 1 });
+    expect(res.body.needsYou.refundRequests).toMatchObject([{ id: paid.id, refundOwed: true }]);
+
+    // Payments before `from` are not counted as collected.
+    const later = encodeURIComponent(new Date(Date.now() + 60_000).toISOString());
+    expect((await merchant.agent.get(`/v1/summary?from=${later}`)).body).toMatchObject({ collected: [], requests: { created: 0, settled: 0 } });
+    expect((await merchant.agent.get("/v1/summary")).status).toBe(400);
+    const other = await setupMerchant(t, "Other");
+    expect((await other.merchant.agent.get(`/v1/summary?from=${from}`)).body).toMatchObject({ collected: [], needsYou: { unmatched: 0, refunds: 0 } });
+  });
+
+  it("payments can be listed for a day by ledger close time", async () => {
+    const { merchant, wallet } = await setupMerchant(t);
+    const e = makeEngine();
+    await e.ingestion.tick();
+    const day = 24 * 3_600_000;
+    await e.pay({ to: wallet.address, amountStroops: USDC(1) }, new Date(Date.now() - day - 3_600_000)); // yesterday
+    await e.pay({ to: wallet.address, amountStroops: USDC(2) }, new Date(Date.now() - 60_000)); // today
+    const iso = (ms: number) => encodeURIComponent(new Date(ms).toISOString());
+    const today = await merchant.agent.get(`/v1/payments?from=${iso(Date.now() - day / 2)}`);
+    expect(today.body.data).toMatchObject([{ amount: "2.0000000" }]);
+    const yesterday = await merchant.agent.get(`/v1/payments?from=${iso(Date.now() - 2 * day)}&to=${iso(Date.now() - day / 2)}`);
+    expect(yesterday.body.data).toMatchObject([{ amount: "1.0000000" }]);
+    expect((await merchant.agent.get("/v1/payments?from=today")).status).toBe(400);
+  });
+
   it("lists payments with outcome, wallet and unmatched filters, newest first", async () => {
     const { merchant, wallet } = await setupMerchant(t);
     const req = await createRequest(merchant, wallet);
@@ -380,6 +572,12 @@ describe("tenant isolation", () => {
     expect404(await w.a.merchant.agent.post(`/v1/payments/${w.bPayment.eventId}/assign`).set("Origin", ORIGIN).send({ requestId: w.aRequest.id }));
     expect404(await w.a.merchant.agent.post(`/v1/payments/${w.aPayment.eventId}/assign`).set("Origin", ORIGIN).send({ requestId: w.bRequest.id }));
     expect((await prisma.chainPayment.findUniqueOrThrow({ where: { eventId: w.bPayment.eventId } })).requestId).toBeNull();
+  });
+  it("POST /v1/payments/:eventId/refunded and POST /v1/payment-requests/:id/refunded", async () => {
+    const w = await world();
+    expect404(await w.a.merchant.agent.post(`/v1/payments/${w.bPayment.eventId}/refunded`).set("Origin", ORIGIN).send({}));
+    expect404(await w.a.merchant.agent.post(`/v1/payment-requests/${w.bRequest.id}/refunded`).set("Origin", ORIGIN).send({}));
+    expect((await prisma.chainPayment.findUniqueOrThrow({ where: { eventId: w.bPayment.eventId } })).refundedAt).toBeNull();
   });
   it("GET /v1/wallets lists only the caller's wallets", async () => {
     const w = await world();

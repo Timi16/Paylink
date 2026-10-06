@@ -15,8 +15,12 @@ model Merchant {
   // Opt-in: a payment with no memo that exactly settles the one open request it could
   // belong to is matched automatically instead of waiting for a manual assign.
   autoMatchByAmount Boolean      @default(false)
+  supportContact String? // how customers reach the business; shown on the checkout
+  defaultWalletId String? // dashboard prefill for new requests
+  defaultExpiryMinutes Int       @default(30) // dashboard prefill for new requests
   createdAt    DateTime          @default(now())
   devices      TrustedDevice[]
+  passwordResets PasswordReset[]
   sessions     Session[]
   apiKeys      ApiKey[]
   wallets      Wallet[]
@@ -46,6 +50,18 @@ model TrustedDevice {
   lastUsedAt DateTime @default(now())
 
   @@index([merchantId])
+}
+
+// One-hour, single-use password reset link. Only the keyed hash of the token is stored.
+model PasswordReset {
+  id         String    @id // HMAC-SHA256 of the token in the emailed link
+  merchantId String
+  merchant   Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([merchantId, createdAt])
 }
 
 // Failed-login counters, shared by every API instance.
@@ -142,6 +158,8 @@ model PaymentRequest {
   paidAt          DateTime?
   paidTxHash      String? // tx that completed the payment
   cancelledAt     DateTime?
+  refundedAt      DateTime? // merchant recorded sending back what the request itself owed
+  refundTxHash    String?
   idempotencyKey  String?
   idempotencyHash String? // sha256 of the create body, to detect key reuse with a different body
   createdVia      String // "dashboard" | "api"
@@ -195,9 +213,12 @@ model ChainPayment {
   matchedBy        String? // "memo" | "amount" | "manual"; null when not tied to a request by PayLink
   assignedManually Boolean         @default(false)
   assignedAt       DateTime?
+  refundedAt       DateTime? // merchant recorded sending this payment back
+  refundTxHash     String?
   createdAt        DateTime        @default(now())
 
   @@index([walletId, createdAt])
+  @@index([walletId, ledgerClosedAt])
   @@index([requestId])
   @@index([outcome])
   @@index([txHash])

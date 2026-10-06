@@ -98,7 +98,12 @@ export function buildOpenApiDocument(serverUrl?: string) {
   add({ method: "post", path: "/auth/login", summary: "Log in", tag: "Auth", auth: "public", body: s.LoginBody, success: { 200: s.MerchantResponse }, errors: [400, 401, 403] });
   add({ method: "post", path: "/auth/logout", summary: "Log out", tag: "Auth", auth: "session", success: { 204: null }, errors: [403] });
   add({ method: "get", path: "/auth/me", summary: "Current merchant", tag: "Auth", auth: "session", success: { 200: s.MerchantResponse } });
-  add({ method: "post", path: "/auth/settings", summary: "Update merchant settings (automatic matching of memo-less payments by exact amount)", tag: "Auth", auth: "session", body: s.UpdateSettingsBody, success: { 200: s.MerchantResponse }, errors: [400, 403] });
+  add({ method: "post", path: "/auth/password/forgot", summary: "Email a one-hour password reset link (same answer whether or not the account exists)", tag: "Auth", auth: "public", body: s.ForgotPasswordBody, success: { 204: null }, errors: [400, 403, 503] });
+  add({ method: "post", path: "/auth/password/reset", summary: "Set a new password from an emailed link; signs out everywhere", tag: "Auth", auth: "public", body: s.ResetPasswordBody, success: { 204: null }, errors: [400, 403] });
+  add({ method: "get", path: "/auth/sessions", summary: "Where the merchant is signed in", tag: "Auth", auth: "session", success: { 200: s.SessionListResponse } });
+  add({ method: "delete", path: "/auth/sessions/{id}", summary: "Sign one session out", tag: "Auth", auth: "session", params: s.SessionIdParamsSchema, success: { 204: null }, errors: [403, 404] });
+  add({ method: "post", path: "/auth/sessions/logout-others", summary: "Sign out every other session", tag: "Auth", auth: "session", success: { 204: null }, errors: [403] });
+  add({ method: "post", path: "/auth/settings", summary: "Update merchant settings (business name, support contact, request defaults, matching by exact amount)", tag: "Auth", auth: "session", body: s.UpdateSettingsBody, success: { 200: s.MerchantResponse }, errors: [400, 403] });
   add({ method: "post", path: "/auth/password", summary: "Change password (other sessions are signed out)", tag: "Auth", auth: "session", body: s.ChangePasswordBody, success: { 204: null }, errors: [400, 403] });
 
   // API keys
@@ -128,7 +133,12 @@ export function buildOpenApiDocument(serverUrl?: string) {
   add({ method: "post", path: "/v1/payment-requests/{id}/cancel", summary: "Cancel a PENDING request", tag: "Payment requests", auth: "any", params: s.IdParamsSchema, success: { 200: s.RequestResponse }, errors: [403, 404, 409] });
   add({ method: "post", path: "/v1/payment-requests/{id}/accept", summary: "Accept as PAID: an UNDERPAID request, an EXPIRED one with a late payment, or a CANCELLED one with a payment after the cancel", tag: "Payment requests", auth: "any", params: s.IdParamsSchema, success: { 200: s.RequestResponse }, errors: [403, 404, 409] });
 
+  add({ method: "get", path: "/v1/payment-requests/stats", summary: "Request counts per status, under the list's filters", tag: "Payment requests", auth: "any", query: s.RequestStatsQuery, success: { 200: s.RequestStatsResponse }, errors: [400] });
+  add({ method: "post", path: "/v1/payment-requests/{id}/refunded", summary: "Record that you sent back what the request itself owed (excess, or money counted before it closed)", tag: "Payment requests", auth: "any", params: s.IdParamsSchema, body: s.MarkRefundedBody, success: { 200: s.RequestResponse }, errors: [400, 403, 404, 409] });
+  add({ method: "get", path: "/v1/summary", summary: "Overview numbers since a point in time", tag: "Payment requests", auth: "any", query: s.SummaryQuery, success: { 200: s.SummaryResponse }, errors: [400] });
+
   // Payments
+  add({ method: "post", path: "/v1/payments/{eventId}/refunded", summary: "Record that you sent a payment back to its payer", tag: "Payments", auth: "any", params: s.EventIdParamsSchema, body: s.MarkRefundedBody, success: { 200: s.PaymentResponse }, errors: [400, 403, 404, 409] });
   add({ method: "get", path: "/v1/payments", summary: "List detected payments (use unmatched=true for the Unmatched list)", tag: "Payments", auth: "any", query: s.ListPaymentsQuery, success: { 200: s.PaymentListResponse }, errors: [400] });
   add({ method: "post", path: "/v1/payments/{eventId}/assign", summary: "Assign an unmatched payment to a request", tag: "Payments", auth: "any", params: s.EventIdParamsSchema, body: s.AssignPaymentBody, success: { 200: s.AssignResponse }, errors: [400, 403, 404, 409] });
 

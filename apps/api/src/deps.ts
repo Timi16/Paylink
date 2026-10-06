@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import type { Logger } from "pino";
+import type { Mailer } from "./lib/mailer";
 import type { LiveHub } from "./modules/stream/hub";
 import type { AccountLoader } from "./modules/wallets/horizonAccounts";
 
@@ -34,4 +35,6 @@ export interface AppDeps {
   hub: LiveHub;
   logger: Logger;
   limits: Limits;
+  /** null when outgoing email is not configured. */
+  mailer: Mailer | null;
 }

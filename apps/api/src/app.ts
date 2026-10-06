@@ -6,6 +6,7 @@ import helmet from "helmet";
 import { pinoHttp } from "pino-http";
 import { env } from "./config/env";
 import { DEFAULT_LIMITS, type AppDeps, type Limits } from "./deps";
+import type { Mailer } from "./lib/mailer";
 import { requireAny, requireSession, sessionOnly, authOf } from "./middleware/auth";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 import { PgRateLimitStore } from "./middleware/pgRateLimitStore";
@@ -22,7 +23,7 @@ import { paymentRoutes } from "./modules/payments/routes";
 import { createPaymentService } from "./modules/payments/service";
 import { publicRoutes } from "./modules/public/routes";
 import { createPublicService } from "./modules/public/service";
-import { requestRoutes } from "./modules/requests/routes";
+import { requestRoutes, summaryRoutes } from "./modules/requests/routes";
 import { createRequestService } from "./modules/requests/service";
 import { merchantStreamRoutes } from "./modules/stream/routes";
 import { SseRegistry } from "./modules/stream/sse";
@@ -35,11 +36,11 @@ export interface BuiltApp {
   sse: SseRegistry;
 }
 
-export type BuildAppDeps = Omit<AppDeps, "limits"> & { limits?: Partial<Limits> };
+export type BuildAppDeps = Omit<AppDeps, "limits" | "mailer"> & { limits?: Partial<Limits>; mailer?: Mailer | null };
 
 /** Wires everything in a fixed order. Tests import this same function. */
 export function buildApp(input: BuildAppDeps): BuiltApp {
-  const deps: AppDeps = { ...input, limits: { ...DEFAULT_LIMITS, ...input.limits } };
+  const deps: AppDeps = { ...input, mailer: input.mailer ?? null, limits: { ...DEFAULT_LIMITS, ...input.limits } };
   const { limits, prisma } = deps;
   const sse = new SseRegistry();
   const app = express();
@@ -148,6 +149,7 @@ export function buildApp(input: BuildAppDeps): BuiltApp {
   v1.use("/wallets", sessionOnly, walletRoutes(walletService));
   v1.use("/stream", sessionOnly, merchantStreamRoutes(deps, sse));
   v1.use("/payment-requests", requestRoutes(requestService, prisma));
+  v1.use("/summary", summaryRoutes(requestService));
   v1.use("/payments", paymentRoutes(createPaymentService(deps), prisma));
   app.use("/v1", v1);
 

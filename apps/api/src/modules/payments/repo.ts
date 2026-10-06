@@ -10,13 +10,17 @@ export interface PaymentFilters {
   walletId?: string;
   outcome?: PaymentOutcome;
   unmatched?: boolean;
+  /** Ledger close time range. */
+  from?: Date;
+  to?: Date;
   after?: { createdAt: Date; id: string };
   take: number;
 }
 
 export function listPayments(db: Db, merchantId: string, f: PaymentFilters): Promise<PaymentWithOwner[]> {
   const and: Prisma.ChainPaymentWhereInput[] = [];
-  if (f.unmatched) and.push({ outcome: { in: [...UNMATCHED_OUTCOMES] }, requestId: null });
+  // "Unmatched" is the merchant's to-do list: ones already sent back are done.
+  if (f.unmatched) and.push({ outcome: { in: [...UNMATCHED_OUTCOMES] }, requestId: null, refundedAt: null });
   if (f.after) {
     and.push({
       OR: [
@@ -30,6 +34,7 @@ export function listPayments(db: Db, merchantId: string, f: PaymentFilters): Pro
       wallet: { merchantId },
       ...(f.walletId ? { walletId: f.walletId } : {}),
       ...(f.outcome ? { outcome: f.outcome } : {}),
+      ...(f.from || f.to ? { ledgerClosedAt: { ...(f.from ? { gte: f.from } : {}), ...(f.to ? { lte: f.to } : {}) } } : {}),
       ...(and.length ? { AND: and } : {}),
     },
     include: { request: { select: { merchantId: true } } },

@@ -230,6 +230,7 @@ export function createWalletService(deps: AppDeps) {
     async remove(merchantId: string, id: string): Promise<void> {
       const wallet = await getOwned(merchantId, id);
       await repo.updateWallet(prisma, merchantId, wallet.id, { deletedAt: new Date() });
+      await prisma.merchant.updateMany({ where: { id: merchantId, defaultWalletId: wallet.id }, data: { defaultWalletId: null } });
       await announce(wallet);
     },
   };

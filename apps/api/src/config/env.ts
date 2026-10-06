@@ -26,6 +26,9 @@ export const EnvSchema = z.object({
     .string()
     .regex(/^[0-9a-fA-F]+$/, "must be hex")
     .min(64, "must be at least 32 bytes (64 hex chars)"),
+  // Outgoing email (password reset links). Without it, production answers "not set up".
+  SMTP_URL: z.string().regex(/^smtps?:\/\//, "must be an smtp:// or smtps:// URL").optional(),
+  MAIL_FROM: z.string().min(3).default("PayLink <no-reply@paylink.local>"),
   ALERT_TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
   ALERT_TELEGRAM_CHAT_ID: z.string().min(1).optional(),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),

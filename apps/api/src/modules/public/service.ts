@@ -45,7 +45,7 @@ export function createPublicService(deps: AppDeps, wallets: WalletService) {
     async checkout(publicId: string): Promise<Checkout> {
       const request = await prisma.paymentRequest.findUnique({
         where: { publicId },
-        include: { merchant: { select: { businessName: true } }, wallet: true },
+        include: { merchant: { select: { businessName: true, supportContact: true } }, wallet: true },
       });
       if (!request) throw notFound("Payment request");
 
@@ -72,6 +72,7 @@ export function createPublicService(deps: AppDeps, wallets: WalletService) {
 
       return {
         businessName: request.merchant.businessName,
+        supportContact: request.merchant.supportContact,
         amount: formatStroops(request.amountStroops),
         amountReceived: formatStroops(request.receivedStroops),
         amountRemaining: formatStroops(remaining),
@@ -83,6 +84,7 @@ export function createPublicService(deps: AppDeps, wallets: WalletService) {
         status: request.status,
         expiresAt: request.expiresAt.toISOString(),
         paidTxHash: request.paidTxHash,
+        paidAt: request.paidAt?.toISOString() ?? null,
         canReceive,
         cannotReceiveReason: reason,
         sep7Uri: sep7Uri({ ...request, amountStroops: remaining > 0n ? remaining : request.amountStroops }),

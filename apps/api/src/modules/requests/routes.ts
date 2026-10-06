@@ -1,5 +1,12 @@
 import { Router } from "express";
-import { CreateRequestBody, IdParamsSchema, ListRequestsQuery } from "@paylink/shared";
+import {
+  CreateRequestBody,
+  IdParamsSchema,
+  ListRequestsQuery,
+  MarkRefundedBody,
+  RequestStatsQuery,
+  SummaryQuery,
+} from "@paylink/shared";
 import { authOf } from "../../middleware/auth";
 import { idempotency } from "../../middleware/idempotency";
 import { parse } from "../../middleware/validate";
@@ -26,6 +33,12 @@ export function requestRoutes(service: RequestService, prisma: PrismaClient): Ro
     res.json({ data: await presentRequests(prisma, data), nextCursor });
   });
 
+  // Before "/:id" so "stats" is not read as an id.
+  router.get("/stats", async (req, res) => {
+    const query = parse(RequestStatsQuery, req.query);
+    res.json(await service.stats(authOf(req).merchantId, query));
+  });
+
   router.get("/:id", async (req, res) => {
     const { id } = parse(IdParamsSchema, req.params);
     const { request, payments, events } = await service.detail(authOf(req).merchantId, id);
@@ -46,5 +59,21 @@ export function requestRoutes(service: RequestService, prisma: PrismaClient): Ro
     res.json({ request: await presentRequest(prisma, await service.accept(authOf(req), id)) });
   });
 
+  router.post("/:id/refunded", async (req, res) => {
+    const { id } = parse(IdParamsSchema, req.params);
+    const { txHash } = parse(MarkRefundedBody, req.body ?? {});
+    res.json({ request: await presentRequest(prisma, await service.markRefunded(authOf(req).merchantId, id, txHash)) });
+  });
+
+  return router;
+}
+
+/** GET /v1/summary: the numbers behind the dashboard overview. */
+export function summaryRoutes(service: RequestService): Router {
+  const router = Router();
+  router.get("/", async (req, res) => {
+    const { from } = parse(SummaryQuery, req.query);
+    res.json(await service.summary(authOf(req).merchantId, new Date(from)));
+  });
   return router;
 }

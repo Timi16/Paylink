@@ -8,6 +8,8 @@ export const PublicIdParamsSchema = z
 /** Everything the public checkout may see. Nothing else about the merchant leaves the API. */
 export const CheckoutSchema = z.object({
   businessName: z.string(),
+  /** How to reach the business, if they set one. */
+  supportContact: z.string().nullable(),
   amount: z.string(),
   amountReceived: z.string(),
   amountRemaining: z.string(),
@@ -20,6 +22,8 @@ export const CheckoutSchema = z.object({
   status: z.enum(REQUEST_STATUSES),
   expiresAt: z.string(),
   paidTxHash: z.string().nullable(),
+  /** Ledger close time of the payment that completed it. */
+  paidAt: z.string().nullable(),
   canReceive: z.boolean(),
   cannotReceiveReason: z.enum(CANNOT_RECEIVE_REASONS).nullable(),
   sep7Uri: z.string(),
@@ -32,6 +36,7 @@ export const CheckoutStatusSchema = z.object({
   amountReceived: z.string(),
   amountRemaining: z.string(),
   paidTxHash: z.string().nullable(),
+  paidAt: z.string().nullable(),
   expiresAt: z.string(),
 });
 export type CheckoutStatus = z.infer<typeof CheckoutStatusSchema>;

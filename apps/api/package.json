@@ -29,11 +29,12 @@
     "express": "^5.0.0",
     "express-rate-limit": "*",
     "helmet": "*",
+    "nodemailer": "^7.0.13",
     "pg": "^8.13.0",
     "pino": "*",
     "pino-http": "*",
-    "zod": "^3.25.0",
-    "prisma": "^6.0.0"
+    "prisma": "^6.0.0",
+    "zod": "^3.25.0"
   },
   "devDependencies": {
     "@eslint/js": "*",
@@ -42,6 +43,7 @@
     "@types/cors": "*",
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
+    "@types/nodemailer": "^8.0.2",
     "@types/pg": "*",
     "@types/supertest": "*",
     "eslint": "*",

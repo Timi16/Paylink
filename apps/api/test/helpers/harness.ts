@@ -8,6 +8,7 @@ import { CHANNELS, PgListener } from "../../src/db/notify";
 import { prisma } from "../../src/db/prisma";
 import type { Limits } from "../../src/deps";
 import { Ingestion, type IngestionDeps } from "../../src/engine/ingestion";
+import type { Mail, Mailer } from "../../src/lib/mailer";
 import type { NormalizedPayment } from "../../src/engine/types";
 import { WatchedWallets } from "../../src/engine/watchedWallets";
 import { LiveHub } from "../../src/modules/stream/hub";
@@ -28,15 +29,24 @@ const NO_LIMITS: Partial<Limits> = {
 
 export async function resetDb(): Promise<void> {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE "RequestEvent", "ChainPayment", "PaymentRequest", "WalletChallenge", "Wallet", "ApiKey", "Session", "TrustedDevice", "LoginThrottle", "RateLimit", "Merchant", "Cursor" CASCADE',
+    'TRUNCATE "RequestEvent", "ChainPayment", "PaymentRequest", "WalletChallenge", "Wallet", "ApiKey", "Session", "PasswordReset", "TrustedDevice", "LoginThrottle", "RateLimit", "Merchant", "Cursor" CASCADE',
   );
 }
 
-export function makeApp(limits: Partial<Limits> = {}) {
+/** Captures outgoing email instead of sending it. */
+export class CapturingMailer implements Mailer {
+  readonly sent: Mail[] = [];
+  async send(mail: Mail): Promise<void> {
+    this.sent.push(mail);
+  }
+}
+
+export function makeApp(limits: Partial<Limits> = {}, opts: { mailer?: Mailer | null } = {}) {
   const accounts = new FakeAccounts();
   const hub = new LiveHub(prisma, silentLogger);
-  const built = buildApp({ prisma, accounts, hub, logger: silentLogger, limits: { ...NO_LIMITS, ...limits } });
-  return { ...built, accounts, hub };
+  const mailer = opts.mailer === undefined ? new CapturingMailer() : opts.mailer;
+  const built = buildApp({ prisma, accounts, hub, logger: silentLogger, mailer, limits: { ...NO_LIMITS, ...limits } });
+  return { ...built, accounts, hub, mailer: mailer as CapturingMailer };
 }
 export type TestApp = ReturnType<typeof makeApp>;
 

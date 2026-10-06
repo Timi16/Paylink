@@ -45,6 +45,8 @@ export interface RefundablePayment {
   assetCode: string;
   assetIssuer: string | null;
   amountStroops: bigint;
+  /** Set once the merchant recorded sending it back. */
+  refundedAt?: Date | null;
 }
 
 export interface RefundLine {
@@ -58,10 +60,11 @@ export interface RefundLine {
  * - everything counted on a request that then closed unpaid;
  * - every linked payment that was not applied: a duplicate, a late one, one after cancel
  *   or reset, or one in the wrong asset.
- * Payments from before a testnet reset are excluded: that money no longer exists.
+ * Payments from before a testnet reset are excluded: that money no longer exists. So is
+ * anything the merchant has already recorded as refunded.
  */
 export function refundDue(
-  r: Pick<PaymentRequest, "status" | "receivedStroops" | "amountStroops" | "assetCode" | "assetIssuer">,
+  r: Pick<PaymentRequest, "status" | "receivedStroops" | "amountStroops" | "assetCode" | "assetIssuer"> & { refundedAt?: Date | null },
   payments: RefundablePayment[] = [],
 ): RefundLine[] {
   const totals = new Map<string, RefundLine>();
@@ -72,13 +75,19 @@ export function refundDue(
     line.amountStroops += amount;
     totals.set(key, line);
   };
-  const closedUnpaid = r.status === "EXPIRED" || r.status === "CANCELLED" || r.status === "NETWORK_RESET";
-  add(r.assetCode, r.assetIssuer, closedUnpaid ? r.receivedStroops : r.receivedStroops - r.amountStroops);
+  if (!r.refundedAt) add(r.assetCode, r.assetIssuer, requestLevelRefund(r));
   for (const p of payments) {
-    if (!REFUNDABLE_OUTCOMES.includes(p.outcome) || p.eventId.startsWith("reset-")) continue;
+    if (!REFUNDABLE_OUTCOMES.includes(p.outcome) || p.eventId.startsWith("reset-") || p.refundedAt) continue;
     add(p.assetCode, p.assetIssuer, p.amountStroops);
   }
   return [...totals.values()];
+}
+
+/** What the request itself owes back, apart from unapplied payments: the excess, or money counted before it closed unpaid. */
+export function requestLevelRefund(r: Pick<PaymentRequest, "status" | "receivedStroops" | "amountStroops">): bigint {
+  const closedUnpaid = r.status === "EXPIRED" || r.status === "CANCELLED" || r.status === "NETWORK_RESET";
+  const owed = closedUnpaid ? r.receivedStroops : r.receivedStroops - r.amountStroops;
+  return owed > 0n ? owed : 0n;
 }
 
 /** True when at least one asset's refund is more than dust. */
@@ -93,7 +102,7 @@ export async function presentRequests(db: Db, requests: PaymentRequest[]): Promi
       ? []
       : await db.chainPayment.findMany({
           where: { requestId: { in: requests.map((r) => r.id) }, outcome: { in: REFUNDABLE_OUTCOMES } },
-          select: { requestId: true, eventId: true, outcome: true, assetCode: true, assetIssuer: true, amountStroops: true },
+          select: { requestId: true, eventId: true, outcome: true, assetCode: true, assetIssuer: true, amountStroops: true, refundedAt: true },
         });
   return requests.map((r) => serializeRequest(r, rows.filter((p) => p.requestId === r.id)));
 }
@@ -125,6 +134,7 @@ export function serializeRequest(r: PaymentRequest, payments: RefundablePayment[
     paidAt: r.paidAt?.toISOString() ?? null,
     paidTxHash: r.paidTxHash,
     cancelledAt: r.cancelledAt?.toISOString() ?? null,
+    refundedAt: r.refundedAt?.toISOString() ?? null,
     refundOwed: refundOwed(due),
     refundDue: due.map((l) => ({ asset: l.asset, amount: formatStroops(l.amountStroops), amountStroops: l.amountStroops.toString() })),
     createdVia: r.createdVia,
@@ -170,6 +180,8 @@ export function serializePayment(p: ChainPayment, view: PaymentView = {}): Payme
     suggestedRequestId,
     assignedManually: p.assignedManually,
     assignedAt: p.assignedAt?.toISOString() ?? null,
+    refundedAt: p.refundedAt?.toISOString() ?? null,
+    refundTxHash: p.refundTxHash,
     createdAt: p.createdAt.toISOString(),
   };
 }
@@ -193,6 +205,7 @@ export function checkoutStatus(r: PaymentRequest): CheckoutStatus {
     amountReceived: formatStroops(r.receivedStroops),
     amountRemaining: formatStroops(remainingStroops(r)),
     paidTxHash: r.paidTxHash,
+    paidAt: r.paidAt?.toISOString() ?? null,
     expiresAt: r.expiresAt.toISOString(),
   };
 }

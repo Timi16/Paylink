@@ -1,8 +1,9 @@
 import { buildApp } from "./app";
-import { env } from "./config/env";
+import { env, isProduction } from "./config/env";
 import { CHANNELS, PgListener } from "./db/notify";
 import { prisma } from "./db/prisma";
 import { logger } from "./lib/logger";
+import { createMailer } from "./lib/mailer";
 import { LiveHub } from "./modules/stream/hub";
 import { HorizonAccountLoader } from "./modules/wallets/horizonAccounts";
 
@@ -27,6 +28,7 @@ async function main(): Promise<void> {
     accounts: new HorizonAccountLoader(env.HORIZON_URL),
     hub,
     logger,
+    mailer: createMailer({ smtpUrl: env.SMTP_URL, from: env.MAIL_FROM, production: isProduction }, logger),
   });
 
   const server = app.listen(env.PORT, env.HOST, () => {

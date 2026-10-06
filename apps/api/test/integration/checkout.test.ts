@@ -143,7 +143,7 @@ describe("checkout API", () => {
     const res = await request(t.app).get(`/public/pay/${req.publicId}`);
     expect(res.status).toBe(200);
     expect(Object.keys(res.body).sort()).toEqual(
-      ["amount", "amountReceived", "amountRemaining", "asset", "businessName", "canReceive", "cannotReceiveReason", "description", "expiresAt", "memo", "memoId", "muxedAddress", "paidTxHash", "sep7Uri", "status", "wallet"].sort(),
+      ["amount", "amountReceived", "amountRemaining", "asset", "businessName", "canReceive", "cannotReceiveReason", "description", "expiresAt", "memo", "memoId", "muxedAddress", "paidAt", "paidTxHash", "sep7Uri", "status", "supportContact", "wallet"].sort(),
     );
     expect(res.body).toMatchObject({ businessName: "Acme Shop", amount: "50.0000000", wallet: wallet.address, memo: req.memo, status: "PENDING", canReceive: true, cannotReceiveReason: null });
     expect(res.body.sep7Uri).toContain(`destination=${wallet.address}`);
@@ -166,7 +166,7 @@ describe("checkout API", () => {
     expect(sse.status).toBe(200);
     await sse.waitFor((c) => c.events.length >= 1);
     expect(sse.events[0]).toMatchObject({ event: "status", data: { status: "PENDING", amountReceived: "0.0000000", amountRemaining: "50.0000000", paidTxHash: null } });
-    expect(Object.keys(sse.events[0]!.data).sort()).toEqual(["amountReceived", "amountRemaining", "expiresAt", "paidTxHash", "status"]);
+    expect(Object.keys(sse.events[0]!.data).sort()).toEqual(["amountReceived", "amountRemaining", "expiresAt", "paidAt", "paidTxHash", "status"]);
 
     await e.pay({ to: wallet.address, amountStroops: USDC(20), memoRaw: req.memo });
     await sse.waitFor((c) => c.statuses().includes("UNDERPAID"));

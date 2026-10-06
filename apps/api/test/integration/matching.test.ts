@@ -472,6 +472,85 @@ describe("refund amounts", () => {
   });
 });
 
+describe("recording refunds", () => {
+  const post = (path: string, body: object = {}) => merchant.agent.post(path).set("Origin", ORIGIN).send(body);
+  const detail = async (id: string) => (await merchant.agent.get(`/v1/payment-requests/${id}`)).body;
+
+  it("marking an unapplied payment as refunded clears it from what is owed", async () => {
+    const req = await createRequest(merchant, wallet);
+    await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: req.memo });
+    const [dup] = await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: req.memo });
+    expect((await detail(req.id)).request).toMatchObject({ refundOwed: true, refundDue: [{ amount: "50.0000000" }] });
+
+    expect((await post(`/v1/payments/${dup!.eventId}/refunded`, { txHash: "nope" })).status).toBe(400);
+    const txHash = "AB".repeat(32);
+    const res = await post(`/v1/payments/${dup!.eventId}/refunded`, { txHash });
+    expect(res.status).toBe(200);
+    expect(res.body.payment).toMatchObject({ outcome: "DUPLICATE", refundTxHash: "ab".repeat(32) });
+    expect(res.body.payment.refundedAt).toBeTruthy();
+    const after = await detail(req.id);
+    expect(after.request).toMatchObject({ status: "PAID", refundOwed: false, refundDue: [] });
+    expect(after.payments.find((p: { eventId: string }) => p.eventId === dup!.eventId).refundedAt).toBeTruthy();
+    // Recording it twice changes nothing.
+    const again = await post(`/v1/payments/${dup!.eventId}/refunded`);
+    expect(again.body.payment.refundedAt).toBe(res.body.payment.refundedAt);
+    expect(again.body.payment.refundTxHash).toBe("ab".repeat(32));
+  });
+
+  it("a payment that was applied is not refunded on its own; the request is", async () => {
+    const req = await createRequest(merchant, wallet);
+    const [p] = await e.pay({ to: wallet.address, amountStroops: USDC(62), memoRaw: req.memo });
+    const onPayment = await post(`/v1/payments/${p!.eventId}/refunded`);
+    expect(onPayment.status).toBe(409);
+    expect(onPayment.body.error.code).toBe("INVALID_TRANSITION");
+
+    expect((await detail(req.id)).request).toMatchObject({ status: "OVERPAID", refundOwed: true, refundDue: [{ amount: "12.0000000" }] });
+    const res = await post(`/v1/payment-requests/${req.id}/refunded`);
+    expect(res.status).toBe(200);
+    expect(res.body.request).toMatchObject({ status: "OVERPAID", refundOwed: false, refundDue: [] });
+    expect(res.body.request.refundedAt).toBeTruthy();
+    expect((await merchant.agent.get("/v1/payment-requests")).body.data[0]).toMatchObject({ refundOwed: false });
+  });
+
+  it("a request with nothing of its own to refund refuses the mark", async () => {
+    const pending = await createRequest(merchant, wallet);
+    const res = await post(`/v1/payment-requests/${pending.id}/refunded`);
+    expect(res.status).toBe(409);
+    const paid = await createRequest(merchant, wallet);
+    await e.pay({ to: wallet.address, amountStroops: USDC(50), memoRaw: paid.memo });
+    expect((await post(`/v1/payment-requests/${paid.id}/refunded`)).status).toBe(409);
+    expect((await post(`/v1/payment-requests/nope/refunded`)).status).toBe(404);
+  });
+
+  it("an unmatched payment marked refunded leaves the unmatched list and can no longer be assigned", async () => {
+    const req = await createRequest(merchant, wallet);
+    const [p] = await e.pay({ to: wallet.address, amountStroops: USDC(50) });
+    expect((await merchant.agent.get("/v1/payments?unmatched=true")).body.data).toHaveLength(1);
+    expect((await post(`/v1/payments/${p!.eventId}/refunded`)).status).toBe(200);
+    expect((await merchant.agent.get("/v1/payments?unmatched=true")).body.data).toEqual([]);
+    // It is still in the full history, marked as refunded.
+    expect((await merchant.agent.get("/v1/payments")).body.data[0].refundedAt).toBeTruthy();
+    const assign = await post(`/v1/payments/${p!.eventId}/assign`, { requestId: req.id });
+    expect(assign.status).toBe(409);
+    expect(assign.body.error.code).toBe("PAYMENT_NOT_ASSIGNABLE");
+    expect((await getRequest(req.id)).status).toBe("PENDING");
+  });
+
+  it("money recorded as refunded on an expired request cannot also be accepted as payment", async () => {
+    const req = await createRequest(merchant, wallet);
+    await e.pay({ to: wallet.address, amountStroops: USDC(20), memoRaw: req.memo }, new Date(Date.now() - 10 * 60_000));
+    await prisma.paymentRequest.update({ where: { id: req.id }, data: { expiresAt: new Date(Date.now() - 5 * 60_000) } });
+    const [late] = await e.pay({ to: wallet.address, amountStroops: USDC(30), memoRaw: req.memo });
+    expect((await getPayment(late!.eventId)).outcome).toBe("LATE");
+    expect((await detail(req.id)).request.refundDue).toMatchObject([{ amount: "50.0000000" }]); // 20 counted + 30 late
+    expect((await post(`/v1/payment-requests/${req.id}/refunded`)).status).toBe(200);
+    expect((await detail(req.id)).request.refundDue).toMatchObject([{ amount: "30.0000000" }]);
+    const accept = await post(`/v1/payment-requests/${req.id}/accept`);
+    expect(accept.status).toBe(409);
+    expect((await getRequest(req.id)).status).toBe("EXPIRED");
+  });
+});
+
 describe("manual assign", () => {
   it("only unmatched payments on the same wallet and asset can be assigned", async () => {
     const req = await createRequest(merchant, wallet);

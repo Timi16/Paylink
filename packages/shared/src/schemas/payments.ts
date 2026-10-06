@@ -7,6 +7,9 @@ export const ListPaymentsQuery = z
     walletId: IdSchema.optional(),
     outcome: z.enum(PAYMENT_OUTCOMES).optional(),
     unmatched: z.enum(["true", "false"]).optional(),
+    /** Ledger close time range. */
+    from: z.string().datetime({ offset: true }).optional(),
+    to: z.string().datetime({ offset: true }).optional(),
     ...PaginationQuery,
   })
   .strict();
@@ -23,4 +26,5 @@ export const PaymentListResponse = z.object({
   data: z.array(PaymentSchema),
   nextCursor: z.string().nullable(),
 });
+export const PaymentResponse = z.object({ payment: PaymentSchema });
 export const AssignResponse = z.object({ payment: PaymentSchema, request: RequestSchema });

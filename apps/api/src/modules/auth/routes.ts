@@ -1,10 +1,19 @@
 import type { CookieOptions, Request, RequestHandler } from "express";
 import { Router } from "express";
-import { ChangePasswordBody, LoginBody, SignupBody, UpdateSettingsBody } from "@paylink/shared";
-import { isProduction } from "../../config/env";
+import {
+  ChangePasswordBody,
+  ForgotPasswordBody,
+  LoginBody,
+  ResetPasswordBody,
+  SessionIdParamsSchema,
+  SignupBody,
+  UpdateSettingsBody,
+} from "@paylink/shared";
+import { env, isProduction } from "../../config/env";
+import { notFound } from "../../lib/errors";
 import { authOf, SESSION_COOKIE } from "../../middleware/auth";
 import { parse } from "../../middleware/validate";
-import { DEVICE_TTL_MS, serializeMerchant, SESSION_TTL_MS, type AuthService } from "./service";
+import { DEVICE_TTL_MS, serializeMerchant, serializeSession, SESSION_TTL_MS, type AuthService } from "./service";
 
 const cookieOptions: CookieOptions = {
   httpOnly: true,
@@ -51,8 +60,10 @@ export function authRoutes(service: AuthService, guards: AuthRouteGuards): Route
       clientOf(req),
       cookieOf(req, SESSION_COOKIE),
       cookieOf(req, DEVICE_COOKIE),
+      body.remember ?? true,
     );
-    res.cookie(SESSION_COOKIE, token, { ...cookieOptions, maxAge: SESSION_TTL_MS });
+    // Not remembered: no max-age, so the cookie goes when the browser closes.
+    res.cookie(SESSION_COOKIE, token, body.remember === false ? cookieOptions : { ...cookieOptions, maxAge: SESSION_TTL_MS });
     res.cookie(DEVICE_COOKIE, deviceToken, deviceCookieOptions);
     res.json({ merchant: serializeMerchant(merchant) });
   });
@@ -73,6 +84,39 @@ export function authRoutes(service: AuthService, guards: AuthRouteGuards): Route
     const body = parse(UpdateSettingsBody, req.body);
     const merchant = await service.updateSettings(authOf(req).merchantId, body);
     res.json({ merchant: serializeMerchant(merchant) });
+  });
+
+  router.get("/sessions", guards.readLimiter, guards.requireSession, async (req, res) => {
+    const auth = authOf(req);
+    const sessions = await service.listSessions(auth.merchantId);
+    res.json({ data: sessions.map((s) => serializeSession(s, auth.sessionId ?? "")) });
+  });
+
+  router.post("/sessions/logout-others", guards.readLimiter, guards.requireSession, async (req, res) => {
+    const auth = authOf(req);
+    await service.revokeOtherSessions(auth.merchantId, auth.sessionId ?? "");
+    res.status(204).end();
+  });
+
+  router.delete("/sessions/:id", guards.readLimiter, guards.requireSession, async (req, res) => {
+    const auth = authOf(req);
+    const { id } = parse(SessionIdParamsSchema, req.params);
+    if (!(await service.revokeSession(auth.merchantId, id))) throw notFound("Session");
+    if (id === auth.sessionId) res.clearCookie(SESSION_COOKIE, cookieOptions);
+    res.status(204).end();
+  });
+
+  router.post("/password/forgot", guards.credentialLimiter, async (req, res) => {
+    const { email } = parse(ForgotPasswordBody, req.body);
+    await service.forgotPassword(email, env.WEB_ORIGIN);
+    res.status(204).end(); // the same answer whether or not the account exists
+  });
+
+  router.post("/password/reset", guards.credentialLimiter, async (req, res) => {
+    const body = parse(ResetPasswordBody, req.body);
+    await service.resetPassword(body.token, body.newPassword);
+    res.clearCookie(SESSION_COOKIE, cookieOptions);
+    res.status(204).end();
   });
 
   router.post("/password", guards.credentialLimiter, guards.requireSession, async (req, res) => {

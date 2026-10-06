@@ -22,7 +22,7 @@ export function createPaymentService(deps: AppDeps) {
    */
   async function suggestRequests(merchantId: string, payments: ChainPayment[]): Promise<Map<string, string>> {
     const unmatched = payments.filter(
-      (p) => p.requestId === null && isUnmatched(p.outcome) && !p.eventId.startsWith(RESET_EVENT_PREFIX),
+      (p) => p.requestId === null && !p.refundedAt && isUnmatched(p.outcome) && !p.eventId.startsWith(RESET_EVENT_PREFIX),
     );
     const suggestions = new Map<string, string>();
     if (unmatched.length === 0) return suggestions;
@@ -51,6 +51,8 @@ export function createPaymentService(deps: AppDeps) {
         walletId: query.walletId,
         outcome: query.outcome,
         unmatched: query.unmatched === "true",
+        from: query.from ? new Date(query.from) : undefined,
+        to: query.to ? new Date(query.to) : undefined,
         after: query.cursor ? decodeCursor(query.cursor) : undefined,
         take: query.limit + 1,
       });
@@ -61,6 +63,31 @@ export function createPaymentService(deps: AppDeps) {
         suggestions: await suggestRequests(merchantId, data),
         nextCursor: rows.length > query.limit && last ? encodeCursor(last.createdAt, last.eventId) : null,
       };
+    },
+
+    /**
+     * Records that the merchant sent a payment back to its payer. PayLink never moves funds;
+     * this only clears it from the merchant's to-do lists. Not for payments that were applied.
+     */
+    async markRefunded(merchantId: string, eventId: string, txHash: string | undefined): Promise<ChainPayment> {
+      const payment = await repo.findPayment(prisma, merchantId, eventId);
+      if (!payment) throw notFound("Payment");
+      if (payment.outcome === "COUNTED") {
+        throw new AppError("INVALID_TRANSITION", "This payment was applied to its request. Record the refund on the request instead.");
+      }
+      if (payment.refundedAt) return payment; // already recorded
+      return prisma.$transaction(async (tx) => {
+        const updated = await tx.chainPayment.update({
+          where: { eventId },
+          data: { refundedAt: new Date(), refundTxHash: txHash ?? null },
+        });
+        await notify(tx, CHANNELS.paymentDetected, { eventId, merchantId });
+        if (payment.requestId) {
+          const req = await tx.paymentRequest.findFirst({ where: { id: payment.requestId, merchantId } });
+          if (req) await notify(tx, CHANNELS.requestUpdated, { id: req.id, publicId: req.publicId, merchantId });
+        }
+        return updated;
+      });
     },
 
     /**
@@ -85,6 +112,9 @@ export function createPaymentService(deps: AppDeps) {
         if (!payment) throw notFound("Payment");
         if (payment.requestId !== null || !isUnmatched(payment.outcome)) {
           throw new AppError("PAYMENT_NOT_ASSIGNABLE", "Only unmatched payments can be assigned to a request");
+        }
+        if (payment.refundedAt) {
+          throw new AppError("PAYMENT_NOT_ASSIGNABLE", "You recorded this payment as refunded, so it can't be assigned");
         }
         if (payment.eventId.startsWith(RESET_EVENT_PREFIX)) {
           // Those funds were wiped with the old network; they cannot pay a new request.

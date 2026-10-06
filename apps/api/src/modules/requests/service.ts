@@ -1,8 +1,9 @@
 import type { PaymentRequest } from "@prisma/client";
-import type { CreateRequestBody, ListRequestsQuery } from "@paylink/shared";
+import type { CreateRequestBody, ListRequestsQuery, RequestStatsQuery } from "@paylink/shared";
+import { CHANNELS, notify } from "../../db/notify";
 import { uniqueViolation } from "../../db/prisma";
 import type { AppDeps } from "../../deps";
-import { parseAmount } from "../../lib/amount";
+import { formatStroops, parseAmount } from "../../lib/amount";
 import { resolveAsset } from "../../lib/asset";
 import { decodeCursor, encodeCursor } from "../../lib/cursor";
 import { AppError, notFound } from "../../lib/errors";
@@ -15,6 +16,7 @@ import { checkCanReceive, RECEIVE_ERROR_MESSAGES } from "../wallets/capability";
 import * as walletRepo from "../wallets/repo";
 import type { WalletService } from "../wallets/service";
 import * as repo from "./repo";
+import { presentRequests, REFUNDABLE_OUTCOMES, requestLevelRefund } from "./serialize";
 
 const WALLET_CHECK_MAX_AGE_MS = 5 * 60_000;
 const MAX_ID_ATTEMPTS = 5;
@@ -148,6 +150,100 @@ export function createRequestService(deps: AppDeps, wallets: WalletService) {
       };
     },
 
+    async stats(merchantId: string, query: RequestStatsQuery) {
+      const byStatus = await repo.requestStats(prisma, merchantId, {
+        walletId: query.walletId,
+        from: query.from ? new Date(query.from) : undefined,
+        to: query.to ? new Date(query.to) : undefined,
+        q: query.q,
+        memo: query.q ? normalizeMemo(query.q) : null,
+      });
+      return { total: Object.values(byStatus).reduce((sum, n) => sum + n, 0), byStatus };
+    },
+
+    /**
+     * Records that the merchant sent back what the request itself owed: the excess over the
+     * amount asked, or money counted before it closed unpaid. PayLink never moves funds;
+     * this only clears the refund from the merchant's to-do list.
+     */
+    async markRefunded(merchantId: string, id: string, txHash: string | undefined): Promise<PaymentRequest> {
+      await getOwned(merchantId, id);
+      return prisma.$transaction(async (tx) => {
+        const req = await lockRequestById(tx, id);
+        if (!req || req.merchantId !== merchantId) throw notFound("Payment request");
+        if (req.refundedAt) return req; // already recorded
+        if (requestLevelRefund(req) === 0n) {
+          throw new AppError("INVALID_TRANSITION", "This request has nothing of its own to refund");
+        }
+        const updated = await tx.paymentRequest.update({
+          where: { id },
+          data: { refundedAt: new Date(), refundTxHash: txHash ?? null },
+        });
+        await notify(tx, CHANNELS.requestUpdated, { id, publicId: req.publicId, merchantId });
+        return updated;
+      });
+    },
+
+    /** The numbers behind the dashboard overview. */
+    async summary(merchantId: string, from: Date) {
+      const now = new Date();
+      const [collected, created, settled, open, underpaid, next, unmatched, refundCandidates] = await Promise.all([
+        prisma.chainPayment.groupBy({
+          by: ["assetCode", "assetIssuer"],
+          where: { request: { merchantId }, outcome: "COUNTED", ledgerClosedAt: { gte: from }, NOT: { eventId: { startsWith: RESET_EVENT_PREFIX } } },
+          _sum: { amountStroops: true },
+          _count: { _all: true },
+        }),
+        prisma.paymentRequest.count({ where: { merchantId, createdAt: { gte: from } } }),
+        prisma.paymentRequest.count({ where: { merchantId, createdAt: { gte: from }, status: { in: ["PAID", "OVERPAID"] } } }),
+        prisma.paymentRequest.count({ where: { merchantId, status: { in: ["PENDING", "UNDERPAID"] } } }),
+        prisma.paymentRequest.count({ where: { merchantId, status: "UNDERPAID" } }),
+        prisma.paymentRequest.findFirst({
+          where: { merchantId, status: { in: ["PENDING", "UNDERPAID"] }, expiresAt: { gt: now } },
+          orderBy: { expiresAt: "asc" },
+          select: { expiresAt: true },
+        }),
+        prisma.chainPayment.count({
+          where: {
+            wallet: { merchantId },
+            requestId: null,
+            refundedAt: null,
+            outcome: { in: ["NO_MEMO", "UNKNOWN_MEMO", "MEMO_TYPE_MISMATCH"] },
+            NOT: { eventId: { startsWith: RESET_EVENT_PREFIX } },
+          },
+        }),
+        // Anything that could owe a refund; the exact rule (amounts, dust) is applied below.
+        prisma.paymentRequest.findMany({
+          where: {
+            merchantId,
+            OR: [
+              { status: "OVERPAID", refundedAt: null },
+              { status: { in: ["EXPIRED", "CANCELLED", "NETWORK_RESET"] }, receivedStroops: { gt: 0 }, refundedAt: null },
+              { payments: { some: { outcome: { in: REFUNDABLE_OUTCOMES }, refundedAt: null, NOT: { eventId: { startsWith: RESET_EVENT_PREFIX } } } } },
+            ],
+          },
+          orderBy: { updatedAt: "desc" },
+          take: 200,
+        }),
+      ]);
+      const owing = (await presentRequests(prisma, refundCandidates)).filter((r) => r.refundOwed);
+      return {
+        from: from.toISOString(),
+        collected: collected.map((c) => {
+          const stroops = c._sum.amountStroops ?? 0n;
+          return {
+            asset: { code: c.assetCode, issuer: c.assetIssuer },
+            amount: formatStroops(stroops),
+            amountStroops: stroops.toString(),
+            payments: c._count._all,
+          };
+        }),
+        requests: { created, settled },
+        open: { count: open, underpaid, nextExpiresAt: next?.expiresAt.toISOString() ?? null },
+        needsYou: { unmatched, refunds: owing.length, refundRequests: owing.slice(0, 3) },
+      };
+    },
+
     async detail(merchantId: string, id: string) {
       const detail = await repo.requestDetail(prisma, merchantId, id);
       if (!detail) throw notFound("Payment request");
@@ -183,6 +279,10 @@ export function createRequestService(deps: AppDeps, wallets: WalletService) {
         const req = await lockRequestById(tx, id);
         if (!req || req.merchantId !== auth.merchantId) throw notFound("Payment request");
 
+        if (req.refundedAt) {
+          // The money this request had received was recorded as sent back; it can't also be kept.
+          throw new AppError("INVALID_TRANSITION", "You recorded a refund for this request, so it can't be accepted as paid");
+        }
         if (req.status === "EXPIRED" || req.status === "CANCELLED") {
           // The payments that arrived after the request closed, and were set aside for it.
           const outcome = req.status === "EXPIRED" ? "LATE" : "AFTER_CANCEL";
