@@ -6,6 +6,8 @@ verifies the payment. Wrong, partial, duplicate, late and expired payments are a
 recognised and shown, never silently ignored. PayLink is non-custodial: it never holds a
 secret key or moves funds.
 
+**Live (testnet):** site https://www.paylink.ink · API https://api.paylink.ink · API reference https://api.paylink.ink/docs
+
 The spec lives in [docs/](docs/). `apps/api` is the backend (API + worker); `apps/web` is the Next.js dashboard and checkout.
 
 ## Run it locally
