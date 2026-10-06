@@ -34,7 +34,7 @@
     "pg": "^8.13.0",
     "pino": "*",
     "pino-http": "*",
-    "prisma": "^6.0.0",
+    "prisma": "^7.10.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
