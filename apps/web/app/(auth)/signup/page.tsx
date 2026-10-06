@@ -79,7 +79,7 @@ export default function SignupPage() {
             <label htmlFor="biz" className="label">
               Business name
             </label>
-            <input id="biz" className={`input${tried && invalid.biz ? " invalid" : ""}`} value={biz} onChange={(e) => setBiz(e.target.value)} placeholder="Ada's Kitchen" maxLength={100} autoComplete="organization" autoFocus />
+            <input id="biz" className={`input${tried && invalid.biz ? " invalid" : ""}`} value={biz} onChange={(e) => setBiz(e.target.value)} placeholder="Lagoon Coffee" maxLength={100} autoComplete="organization" autoFocus />
             {tried && invalid.biz ? <span className="field-error">Enter the name customers know you by.</span> : <span className="hint">Shown on every checkout page.</span>}
           </div>
           <div className="field">
@@ -95,7 +95,7 @@ export default function SignupPage() {
                 setEmail(e.target.value);
                 setEmailTaken(false);
               }}
-              placeholder="ada@example.com"
+              placeholder="you@yourbusiness.com"
               autoComplete="email"
             />
             {tried && invalid.email ? <span className="field-error">Enter a valid email address.</span> : null}

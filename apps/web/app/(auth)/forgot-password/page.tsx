@@ -57,7 +57,7 @@ export default function ForgotPasswordPage() {
               <label htmlFor="email" className="label">
                 Email
               </label>
-              <input id="email" type="email" className={`input${tried && !emailOk ? " invalid" : ""}`} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ada@example.com" autoComplete="email" autoFocus />
+              <input id="email" type="email" className={`input${tried && !emailOk ? " invalid" : ""}`} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@yourbusiness.com" autoComplete="email" autoFocus />
               {tried && !emailOk ? <span className="field-error">Enter a valid email address.</span> : null}
             </div>
             <button type="submit" className="btn btn-primary btn-lg" disabled={busy}>

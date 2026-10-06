@@ -168,6 +168,72 @@ dialog { margin: auto; }
   .auth-hero h1 { font-size: 32px; }
   .auth-panel { padding: 24px 16px; }
 }
+
+/* ───────── Motion ─────────
+   Calm and quick: things arrive with a short rise, controls answer the hand, and live
+   changes draw the eye once. Nothing loops except "live" and "waiting" indicators.
+   Everything here is switched off by the reduced-motion rule at the end of this file. */
+:root {
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --t-fast: 0.12s;
+  --t-base: 0.2s;
+  --t-slow: 0.45s;
+}
+
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(15, 118, 110, 0.45); } 100% { box-shadow: 0 0 0 8px rgba(15, 118, 110, 0); } }
+@keyframes flash { from { background-color: var(--teal-tint); } to { background-color: transparent; } }
+@keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* Controls answer the hand. */
+a, .btn, .btn-link, .nav-link, .input, .select, .textarea, .seg button, .pill, .card, .table tbody tr {
+  transition: background-color var(--t-base) var(--ease-out), border-color var(--t-base) var(--ease-out),
+    color var(--t-fast) var(--ease-out), box-shadow var(--t-base) var(--ease-out), transform var(--t-fast) var(--ease-out);
+}
+.btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(15, 23, 42, 0.1); }
+.btn-primary:hover:not(:disabled) { box-shadow: 0 6px 16px rgba(15, 118, 110, 0.28); }
+.btn:active:not(:disabled) { transform: translateY(0) scale(0.98); box-shadow: none; }
+.input:hover, .select:hover, .textarea:hover { border-color: var(--slate-soft); }
+.input:focus, .select:focus, .textarea:focus { box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12); }
+.nav-link:active { transform: scale(0.98); }
+.seg button:active { transform: scale(0.97); }
+a.card:hover, a[class~="tile"]:hover { text-decoration: none; }
+
+/* Pages arrive: each block of the page rises in turn. AppShell re-keys <main> per route. */
+.shell-main > * { animation: rise var(--t-slow) var(--ease-out) both; }
+.shell-main > *:nth-child(2) { animation-delay: 0.05s; }
+.shell-main > *:nth-child(3) { animation-delay: 0.1s; }
+.shell-main > *:nth-child(4) { animation-delay: 0.15s; }
+.shell-main > *:nth-child(n + 5) { animation-delay: 0.2s; }
+.auth-card { animation: pop var(--t-slow) var(--ease-out) both; }
+.auth-hero > * { animation: rise 0.6s var(--ease-out) both; }
+.auth-hero > *:nth-child(2) { animation-delay: 0.08s; }
+.auth-hero > *:nth-child(3) { animation-delay: 0.16s; }
+.auth-hero > *:nth-child(n + 4) { animation-delay: 0.24s; }
+
+/* Overlays. */
+dialog[open] { animation: pop 0.18s var(--ease-out); }
+dialog[open]::backdrop { animation: fade 0.18s ease-out; }
+.toast { animation: pop 0.2s var(--ease-out); }
+.alert, .notice, .success, .field-error { animation: rise 0.25s var(--ease-out); }
+
+/* Lists: rows settle in; a row that just changed is flashed once (see .is-fresh). */
+.table tbody tr { animation: fade 0.3s ease-out both; }
+.is-fresh { animation: flash 1.6s ease-out; }
+.feed-item { animation: pop 0.35s var(--ease-out) both; }
+.pill { animation: pop 0.25s var(--ease-out); }
+
+/* Live indicator and progress. */
+.live-dot { animation: pulse-ring 1.8s ease-out infinite; }
+.bar-fill { transform-origin: left center; animation: grow 0.7s var(--ease-out) both; transition: width 0.6s var(--ease-out); }
+
+/* Interactive tiles lift slightly. */
+.lift { transition: transform var(--t-base) var(--ease-out), box-shadow var(--t-base) var(--ease-out), border-color var(--t-base) var(--ease-out); }
+a.lift:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); border-color: var(--border-input); text-decoration: none; }
+
 @media (prefers-reduced-motion: reduce) {
-  * { animation: none !important; transition: none !important; }
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

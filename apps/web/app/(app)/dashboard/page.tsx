@@ -74,7 +74,7 @@ function Tile({ href, label, value, sub, attention }: { href?: string; label: st
     </>
   );
   return href ? (
-    <Link href={href} style={style}>
+    <Link href={href} style={style} className="lift">
       {body}
     </Link>
   ) : (
@@ -324,7 +324,7 @@ export default function OverviewPage() {
                 role="status"
                 style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, padding: "0 10px", border: "1px solid var(--border)", background: "var(--surface)", borderRadius: 999, fontSize: 12, fontWeight: 700, color: live.connected ? "var(--teal-deep)" : "var(--slate)" }}
               >
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: live.connected ? "var(--teal)" : "var(--slate-soft)" }} />
+                <span className={live.connected ? "live-dot" : undefined} style={{ width: 8, height: 8, borderRadius: "50%", background: live.connected ? "var(--teal)" : "var(--slate-soft)" }} />
                 {live.connected ? "Live" : "Reconnecting"}
               </span>
             </div>
@@ -337,7 +337,7 @@ export default function OverviewPage() {
                 {feed.map((p) => {
                   const line = feedLine(p);
                   return (
-                    <li key={p.eventId} style={{ display: "flex", gap: 12 }}>
+                    <li key={p.eventId} className="feed-item" style={{ display: "flex", gap: 12 }}>
                       <span className="mono" title={new Date(p.ledgerClosedAt).toLocaleString("en-GB")} style={{ fontSize: 12, color: "var(--slate)", width: 40, flexShrink: 0, paddingTop: 2 }}>
                         {formatTime(p.ledgerClosedAt)}
                       </span>

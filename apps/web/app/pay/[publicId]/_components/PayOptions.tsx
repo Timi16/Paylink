@@ -68,7 +68,7 @@ export function PayOptions({ checkout, onSent }: Props) {
           </button>
         ))}
       </div>
-      <div role="tabpanel" id="pay-panel" aria-labelledby={`pay-tab-${tab}`}>
+      <div key={tab} className={styles.panel} role="tabpanel" id="pay-panel" aria-labelledby={`pay-tab-${tab}`}>
         {tab === "freighter" && <FreighterPanel checkout={checkout} onSent={onSent} />}
         {tab === "qr" && <QrPanel uri={checkout.sep7Uri} />}
         {tab === "manual" && <ManualPanel checkout={checkout} onSent={onSent} />}

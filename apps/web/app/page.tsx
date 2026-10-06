@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Logo, LogoMark } from "@/components/Logo";
 import { API_URL } from "@/lib/config";
 import { CodeTabs } from "./_landing/CodeTabs";
+import { ScrollReveal } from "./_landing/ScrollReveal";
 import { DASH_POINTS, FAQS, FEATURES, NETWORK_FACTS, STEPS_COPY } from "./_landing/content";
 import { Arrow, Check, DashboardArt, HeroArt, StepArt } from "./_landing/Mockups";
 import s from "./_landing/landing.module.css";
@@ -18,6 +19,7 @@ const DOCS_URL = `${API_URL}/docs`;
 export default function LandingPage() {
   return (
     <div className={s.root}>
+      <ScrollReveal targets={[s.intro, s.step, s.feature, s.darkHead, s.dash, s.point, s.devCopy, s.code, s.fact, s.faqTitle, s.faqItem, s.ctaCopy, s.railsRow]} />
       <section className={s.hero}>
         <div aria-hidden="true" className={s.heroBg} />
         <div className={s.wrap}>

@@ -4,7 +4,7 @@ import s from "./landing.module.css";
 
 /*
  * Product illustrations. Everything in this file is sample content drawn to show what the product
- * looks like ("Ada's Kitchen", "Order #1044" …). Each one is exposed to assistive tech as a single
+ * looks like ("Lagoon Coffee", "Order #1044" …). Each one is exposed to assistive tech as a single
  * labelled image, so none of it is read out as if it were live data.
  */
 
@@ -49,7 +49,7 @@ export function HeroArt() {
           <i />
           <i />
           <i />
-          <span>Overview · Ada&apos;s Kitchen</span>
+          <span>Overview · Lagoon Coffee</span>
         </div>
         <div className={s.artBody}>
           <div className={s.artStats}>
@@ -94,7 +94,7 @@ export function HeroArt() {
             <span className={s.artAmount}>
               50.00 <small>USDC</small>
             </span>
-            <span className={s.artTiny}>to Ada&apos;s Kitchen</span>
+            <span className={s.artTiny}>to Lagoon Coffee</span>
           </div>
           <div className={`${s.artCard} ${s.artMeta}`}>
             <div>
@@ -205,7 +205,7 @@ export function DashboardArt() {
         <span className={s.dashItem}>Wallets</span>
       </div>
       <div className={s.dashMain}>
-        <span className={s.dashHello}>Good morning, Ada</span>
+        <span className={s.dashHello}>Good morning, Lagoon Coffee</span>
         <div className={s.dashStats}>
           <div className={s.dashStat}>
             <div>Collected today</div>

@@ -25,7 +25,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       {children}
       <div aria-live="polite" role="status" style={{ position: "fixed", left: 0, right: 0, bottom: 24, display: "flex", justifyContent: "center", pointerEvents: "none", zIndex: 50 }}>
         {message ? (
-          <div style={{ background: "var(--ink)", color: "#FFFFFF", padding: "12px 18px", borderRadius: 12, fontSize: 14, fontWeight: 600, maxWidth: "calc(100% - 32px)", boxShadow: "0 10px 30px rgba(15,23,42,0.25)" }}>
+          <div key={message} className="toast" style={{ background: "var(--ink)", color: "#FFFFFF", padding: "12px 18px", borderRadius: 12, fontSize: 14, fontWeight: 600, maxWidth: "calc(100% - 32px)", boxShadow: "0 10px 30px rgba(15,23,42,0.25)" }}>
             {message}
           </div>
         ) : null}

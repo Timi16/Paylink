@@ -386,10 +386,10 @@ function PaidStamp({ checkout, paidSeenAt }: { checkout: Checkout; paidSeenAt: n
           </span>
         )}
       </div>
-      <span className="tnum" style={{ fontSize: 30, fontWeight: 800 }}>
+      <span className={`tnum ${styles.afterStamp}`} style={{ fontSize: 30, fontWeight: 800 }}>
         {formatAmount(over ? checkout.amountReceived : checkout.amount)} <span style={{ fontSize: 16, color: "var(--slate)" }}>{code}</span>
       </span>
-      <span style={{ fontSize: 14, color: "var(--slate)" }}>{checkout.businessName} has been told. You can close this page.</span>
+      <span className={styles.afterStamp} style={{ fontSize: 14, color: "var(--slate)" }}>{checkout.businessName} has been told. You can close this page.</span>
       {over && extra > 0n && (
         <span style={{ fontSize: 13, color: "var(--attention-fg)", fontWeight: 600 }}>
           That is {formatAmount(fromStroops(extra))} {code} more than the {formatAmount(checkout.amount)} {code} asked for. {checkout.businessName} has been told about the
@@ -442,7 +442,7 @@ function Due({ checkout, now, confirming, closing }: { checkout: Checkout; now: 
               aria-valuenow={percent > 100n ? 100 : parseInt(percent.toString(), 10)}
               style={{ height: 8, borderRadius: 999, background: "var(--border)", overflow: "hidden" }}
             >
-              <div style={{ width, height: 8, background: "#D97706" }} />
+              <div className={styles.fill} style={{ width, height: 8, background: "#D97706" }} />
             </div>
             <span style={{ fontSize: 13, color: "var(--attention-fg)", fontWeight: 600 }}>
               {formatAmount(checkout.amountReceived)} of {formatAmount(checkout.amount)} received. Send the rest with the same memo.

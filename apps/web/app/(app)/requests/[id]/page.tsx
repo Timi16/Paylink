@@ -457,7 +457,7 @@ export default function RequestDetailPage() {
               </div>
             </div>
             <div role="progressbar" aria-label="Share of the amount received" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Number.parseInt(barPct.toString(), 10)} style={{ height: 10, borderRadius: 999, background: "var(--border)", overflow: "hidden" }}>
-              <div style={{ width: `${barPct.toString()}%`, height: 10, background: "var(--teal)" }} />
+              <div className="bar-fill" style={{ width: `${barPct.toString()}%`, height: 10, background: "var(--teal)" }} />
             </div>
             <span style={{ fontSize: 13, color: "var(--slate)" }}>
               {pct.toString()}% received · all amounts in {code}

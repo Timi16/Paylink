@@ -78,7 +78,10 @@ export function AppShell({ merchant, children }: { merchant: Merchant; children:
           </div>
         </div>
       </nav>
-      <main className="shell-main">{children}</main>
+      {/* Keyed by route so each page plays its arrival once. */}
+      <main key={pathname} className="shell-main">
+        {children}
+      </main>
     </div>
   );
 }

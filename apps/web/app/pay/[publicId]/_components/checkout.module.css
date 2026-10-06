@@ -13,9 +13,7 @@
 }
 
 .spinner { width: 16px; height: 16px; border-radius: 50%; border: 2.5px solid currentColor; border-right-color: transparent; display: inline-block; animation: spin 0.8s linear infinite; }
-.stamp { animation: pop 0.35s ease-out; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes pop { from { opacity: 0; transform: translateY(8px) scale(0.98) rotate(-6deg); } to { opacity: 1; transform: rotate(-6deg); } }
 
 .tab { height: 40px; border: none; border-radius: 9px; background: transparent; color: var(--slate); font-weight: 600; font-size: 13px; padding: 0 4px; }
 .tab[aria-selected="true"] { background: var(--surface); color: var(--ink); font-weight: 700; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12); }
@@ -28,5 +26,32 @@
   .page { min-height: 0; background: #fff; }
   .column { padding: 0; max-width: 420px; }
   .noPrint { display: none !important; }
-  .stamp { animation: none; }
+}
+
+/* ───────── Motion ───────── */
+@keyframes co-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+/* The stamp comes down hard, like a rubber stamp: big and faint, then pressed, then settled. */
+@keyframes co-stamp {
+  0% { opacity: 0; scale: 2.4; }
+  55% { opacity: 1; scale: 0.92; }
+  75% { scale: 1.04; }
+  100% { opacity: 1; scale: 1; }
+}
+@keyframes co-ring { from { opacity: 0.5; scale: 1; } to { opacity: 0; scale: 1.5; } }
+@keyframes co-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+.column > * { animation: co-rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.column > *:nth-child(2) { animation-delay: 0.06s; }
+.column > *:nth-child(3) { animation-delay: 0.12s; }
+.column > *:nth-child(n + 4) { animation-delay: 0.18s; }
+.panel { animation: co-rise 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.tab { transition: background-color 0.18s, color 0.18s, box-shadow 0.18s; }
+.stamp { position: relative; animation: co-stamp 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) 0.1s both; }
+.stamp::after { content: ""; position: absolute; inset: -6px; border: 2px solid var(--teal); border-radius: 14px; animation: co-ring 0.7s ease-out 0.4s both; pointer-events: none; }
+.afterStamp { animation: co-rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) 0.5s both; }
+.fill { transform-origin: left center; animation: co-grow 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; transition: width 0.7s cubic-bezier(0.2, 0.8, 0.2, 1); }
+
+@media (prefers-reduced-motion: reduce), print {
+  .column > *, .panel, .stamp, .stamp::after, .afterStamp, .fill, .spinner { animation: none !important; transition: none !important; }
+  .stamp::after { display: none; }
 }

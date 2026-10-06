@@ -76,7 +76,7 @@ export function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 }
 
-/** Two-letter initials for avatars: "Ada's Kitchen" -> "AK", "ada@example.com" -> "AD". */
+/** Two-letter initials for avatars: "Lagoon Coffee" -> "LC", "tolu@example.com" -> "TO". */
 export function initials(name: string): string {
   const words = name.replace(/@.*/, "").split(/[\s._-]+/).filter(Boolean);
   const letters = words.length >= 2 ? `${words[0]?.[0] ?? ""}${words[1]?.[0] ?? ""}` : (words[0] ?? "?").slice(0, 2);
