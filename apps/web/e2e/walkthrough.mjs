@@ -141,7 +141,11 @@ try {
   const overflow = await m.evaluate(() => document.documentElement.scrollWidth - window.innerWidth); if (overflow > 2) problems.push(`mobile dashboard scrolls sideways by ${overflow}px`);
   const ov2 = await pay.evaluate(() => document.documentElement.scrollWidth - window.innerWidth); if (ov2 > 2) problems.push(`checkout scrolls sideways by ${ov2}px`);
 
-  log("forgot password page"); await page.goto(WEB + "/forgot-password"); await page.getByLabel("Email").fill(email); await page.getByRole("button", { name: /send reset link/i }).click(); await page.getByText("Check your email").waitFor({ timeout: 10000 }); await shot(page, "27-forgot-sent");
+  log("forgot password page"); await page.goto(WEB + "/forgot-password"); await page.getByLabel("Email").fill(email); await page.getByRole("button", { name: /send reset link/i }).click(); const outcome = await Promise.race([
+    page.getByText("Check your email").waitFor({ timeout: 10000 }).then(() => "sent"),
+    page.getByText(/isn't set up/i).waitFor({ timeout: 10000 }).then(() => "no-smtp"),
+  ]);
+  log(outcome === "sent" ? "  reset email accepted" : "  NOTE: password reset is off because SMTP_URL is not set (production mode)"); await shot(page, "27-forgot-sent");
 
   log("logout"); await page.goto(WEB + "/dashboard", { waitUntil: "networkidle" }); await page.getByRole("button", { name: "Log out" }).click(); await page.waitForURL(/\/login/, { timeout: 10000 });
   log("login again"); await page.getByLabel("Email").fill(email); await page.locator("#pw").fill("wrong password!!"); await page.getByRole("button", { name: "Sign in" }).click(); await page.getByText(/don't match/i).waitFor({ timeout: 10000 });

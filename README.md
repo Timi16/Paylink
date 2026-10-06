@@ -65,28 +65,39 @@ Circle's testnet issuer afterwards.
 See [.env.example](.env.example). `config/env.ts` validates everything at boot and refuses
 to start on any network but testnet.
 
-## Deploy (pm2)
+## Deploy
 
-The API and the worker are two pm2 processes from one build, defined in
+**Backend (pm2).** The API and the worker are two pm2 processes from one build, defined in
 [ecosystem.config.cjs](ecosystem.config.cjs). On the server (Node 22+, pnpm, pm2, Postgres 16):
 
 ```sh
 git clone <repo> ~/paylink && cd ~/paylink
-cp .env.example .env                       # fill in; NODE_ENV=production, real WEB_ORIGIN
+cp .env.example .env            # fill in: NODE_ENV=production, WEB_ORIGIN, SESSION_SECRET, DATABASE_URL
 pnpm install --frozen-lockfile
 pnpm --filter @paylink/api db:deploy
 pnpm build
 pm2 start ecosystem.config.cjs && pm2 save && pm2 startup
 ```
 
-Later deploys: `./deploy/deploy.sh <git sha>` pulls, migrates, builds, runs `pm2 reload`,
-polls `/health` for 60 s and rolls back to the previous commit if it stays unhealthy.
-[.github/workflows/ci.yml](.github/workflows/ci.yml) runs lint, typecheck and tests, then
-calls that script over SSH.
+Later deploys: `./deploy/deploy.sh <git sha>` pulls, migrates, builds, runs `pm2 reload`, polls
+`/health` for 60 s and rolls back to the previous commit if it stays unhealthy.
+[.github/workflows/ci.yml](.github/workflows/ci.yml) runs audit, lint, typecheck, tests and both builds,
+then calls that script over SSH.
 
-- Run exactly **one** `paylink-worker`. `paylink-api` can run more than one instance if ever needed (live updates go through Postgres NOTIFY; login throttling and the credential rate limit are in Postgres); the high-volume rate limits and stream caps are per instance.
-- Put Caddy in front ([deploy/Caddyfile.snippet](deploy/Caddyfile.snippet)); the API trusts exactly one proxy hop.
+- Run exactly **one** `paylink-worker`.
+- Put Caddy in front ([deploy/Caddyfile.snippet](deploy/Caddyfile.snippet)) for HTTPS; the API listens on
+  `127.0.0.1` and trusts exactly one proxy hop.
 - Log rotation: `pm2 install pm2-logrotate`.
+
+**Web app (Vercel).** Import the repo in Vercel with **Root Directory = `apps/web`** and set
+`NEXT_PUBLIC_API_URL` (e.g. `https://api.paylink.example.com`) and `NEXT_PUBLIC_HORIZON_URL`.
+Two things must line up or sign-in will not work:
+
+- The API's `WEB_ORIGIN` must be exactly the address the site is served from (scheme and host, no
+  trailing slash). Preview deployments on other addresses are refused by the API.
+- The site and the API must share a registrable domain (`paylink.example.com` and
+  `api.paylink.example.com`). On a `*.vercel.app` address with the API elsewhere, browsers treat the
+  session cookie as third-party and drop it. Use a custom domain for both.
 
 ## Runbook
 

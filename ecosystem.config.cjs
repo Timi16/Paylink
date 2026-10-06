@@ -1,4 +1,5 @@
-// pm2 process file: one codebase, two processes.
+// pm2 process file: the API and the worker (one codebase, two processes).
+// The web app (apps/web) is not run here: it is deployed on Vercel.
 //   pm2 start ecosystem.config.cjs && pm2 save
 //   pm2 reload ecosystem.config.cjs --update-env     (after a deploy)
 // Both read the repo-root .env through Node's --env-file.

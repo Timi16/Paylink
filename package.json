@@ -16,7 +16,8 @@
     "format": "prettier --write .",
     "db:up": "docker compose -f docker-compose.dev.yml up -d",
     "scenario": "pnpm --filter @paylink/api scenario",
-    "seed": "pnpm --filter @paylink/api seed"
+    "seed": "pnpm --filter @paylink/api seed",
+    "build:web": "pnpm --filter @paylink/web build"
   },
   "devDependencies": {
     "prettier": "^3.3.0"

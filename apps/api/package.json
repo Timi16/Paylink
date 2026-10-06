@@ -29,7 +29,7 @@
     "express": "^5.0.0",
     "express-rate-limit": "*",
     "helmet": "*",
-    "nodemailer": "^7.0.13",
+    "nodemailer": "^10.0.14",
     "pg": "^8.13.0",
     "pino": "*",
     "pino-http": "*",

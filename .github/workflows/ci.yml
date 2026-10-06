@@ -9,9 +9,37 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        deploy:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: paylink
+          POSTGRES_PASSWORD: paylink
+          POSTGRES_DB: paylink_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U paylink" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://paylink:paylink@localhost:5432/paylink_test
+      DATABASE_URL: postgresql://paylink:paylink@localhost:5432/paylink_test
+      NEXT_PUBLIC_API_URL: https://api.paylink.example
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --prod --audit-level high
+      - run: pnpm --filter @paylink/api exec prisma generate
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm build:web
+
+  deploy:
     needs: test
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     environment: production
     steps:
