@@ -169,16 +169,16 @@ function WalletCard({ wallet: w, isDefault, now, verifyState, verifyBusy, onVeri
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {!w.verified ? (
-            <button type="button" className="btn btn-primary btn-sm" style={SMALL_BTN} onClick={() => onVerify(w)} disabled={verifyBusy}>
+            <button type="button" className="btn btn-primary btn-sm" style={SMALL_BTN} onClick={() => onVerify(w)} disabled={verifyBusy} aria-busy={verifyBusy}>
               Verify with Freighter
             </button>
           ) : null}
           {w.verified && !isDefault ? (
-            <button type="button" className="btn btn-secondary btn-sm" style={SMALL_BTN} onClick={makeDefault} disabled={settingDefault}>
+            <button type="button" className="btn btn-secondary btn-sm" style={SMALL_BTN} onClick={makeDefault} disabled={settingDefault} aria-busy={settingDefault}>
               {settingDefault ? "Saving…" : "Make default"}
             </button>
           ) : null}
-          <button type="button" className="btn btn-secondary btn-sm" style={SMALL_BTN} onClick={refresh} disabled={checking}>
+          <button type="button" className="btn btn-secondary btn-sm" style={SMALL_BTN} onClick={refresh} disabled={checking} aria-busy={checking}>
             {checking ? "Checking…" : "Refresh"}
           </button>
           <button
@@ -365,14 +365,14 @@ export default function WalletsPage() {
         width={480}
         footer={
           <>
-            <button type="button" className="btn btn-secondary" onClick={closeRemove} disabled={removeBusy} style={{ fontSize: 15 }}>
+            <button type="button" className="btn btn-secondary" onClick={closeRemove} disabled={removeBusy} aria-busy={removeBusy} style={{ fontSize: 15 }}>
               Keep wallet
             </button>
             <button
               type="button"
               className="btn"
               onClick={doRemove}
-              disabled={removeBusy}
+              disabled={removeBusy} aria-busy={removeBusy}
               style={{ background: "var(--error)", color: "#FFFFFF", fontSize: 15 }}
             >
               {removeBusy ? "Removing…" : "Remove wallet"}

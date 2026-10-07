@@ -135,7 +135,7 @@ export function DefaultsCard({ merchant }: { merchant: Merchant }) {
           <input type="checkbox" role="switch" checked={value.autoMatch} onChange={(e) => edit({ autoMatch: e.target.checked })} style={{ width: 22, height: 22, accentColor: "var(--teal)", margin: 0, flexShrink: 0 }} />
         </label>
         <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <button type="submit" className="btn btn-primary" disabled={busy} style={{ fontSize: 15 }}>
+          <button type="submit" className="btn btn-primary" disabled={busy} aria-busy={busy} style={{ fontSize: 15 }}>
             {busy ? "Saving…" : "Save defaults"}
           </button>
         </div>

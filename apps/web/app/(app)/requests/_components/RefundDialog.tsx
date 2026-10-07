@@ -53,10 +53,10 @@ export function RefundDialog({ amount, onClose, onConfirm }: Props) {
       width={480}
       footer={
         <>
-          <button type="button" className="btn btn-secondary" onClick={close} disabled={busy}>
+          <button type="button" className="btn btn-secondary" onClick={close} disabled={busy} aria-busy={busy}>
             Not yet
           </button>
-          <button type="button" className="btn btn-primary" onClick={confirm} disabled={busy}>
+          <button type="button" className="btn btn-primary" onClick={confirm} disabled={busy} aria-busy={busy}>
             {busy ? "Recording…" : "I've sent it"}
           </button>
         </>

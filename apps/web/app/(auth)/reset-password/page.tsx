@@ -87,7 +87,7 @@ function ResetForm() {
           {error}
         </div>
       ) : null}
-      <button type="submit" className="btn btn-primary btn-lg" disabled={busy}>
+      <button type="submit" className="btn btn-primary btn-lg" disabled={busy} aria-busy={busy}>
         {busy ? "Updating…" : "Update password"}
       </button>
     </form>

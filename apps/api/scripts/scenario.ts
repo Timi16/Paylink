@@ -7,6 +7,9 @@
  *   pnpm scenario -- --print-issuer     # prints USDC_ISSUER=G… ; put it in .env, restart
  *   pnpm scenario                       # runs every case; add --skip-timing to skip the 5-min waits
  *
+ * The API must run with EMAIL_VERIFICATION=off (or no SMTP_URL): the scenario signs up a throwaway
+ * merchant and cannot read a code from an inbox.
+ *
  * Each case creates a request through the API, pays on-chain, then polls the API until the
  * request status and payment outcome are the expected ones.
  */

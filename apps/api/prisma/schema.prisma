@@ -12,6 +12,8 @@ model Merchant {
   email        String            @unique
   passwordHash String
   businessName String
+  emailVerifiedAt DateTime? // set once the merchant entered the code emailed at sign-up
+  emailVerification EmailVerification?
   // Opt-in: a payment with no memo that exactly settles the one open request it could
   // belong to is matched automatically instead of waiting for a manual assign.
   autoMatchByAmount Boolean      @default(false)
@@ -51,6 +53,16 @@ model TrustedDevice {
   lastUsedAt DateTime @default(now())
 
   @@index([merchantId])
+}
+
+// The six-digit code emailed at sign-up. One live code per merchant; only its keyed hash is stored.
+model EmailVerification {
+  merchantId String   @id
+  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int      @default(0) // wrong guesses against this code
+  sentAt     DateTime @default(now())
 }
 
 // One-hour, single-use password reset link. Only the keyed hash of the token is stored.

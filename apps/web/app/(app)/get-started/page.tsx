@@ -201,7 +201,7 @@ export default function GetStartedPage() {
                 ) : null}
                 {verifying ? <VerifyProgress phase={verifying} /> : null}
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-                  <button type="button" className="btn btn-primary" onClick={onVerify} disabled={verifyBusy}>
+                  <button type="button" className="btn btn-primary" onClick={onVerify} disabled={verifyBusy} aria-busy={verifyBusy}>
                     Verify with Freighter
                   </button>
                   <span style={{ fontSize: 13, color: "var(--slate)" }}>Set Freighter to Testnet and select this account first.</span>

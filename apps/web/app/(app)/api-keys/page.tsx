@@ -401,10 +401,10 @@ export default function ApiKeysPage() {
             <span style={{ fontWeight: 700 }}>Stellar Testnet</span>
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
-            <button type="button" className="btn btn-secondary" onClick={closeCreate} disabled={creating} style={{ fontSize: 15 }}>
+            <button type="button" className="btn btn-secondary" onClick={closeCreate} disabled={creating} aria-busy={creating} style={{ fontSize: 15 }}>
               Cancel
             </button>
-            <button type="submit" className="btn btn-primary" disabled={creating} style={{ fontSize: 15 }}>
+            <button type="submit" className="btn btn-primary" disabled={creating} aria-busy={creating} style={{ fontSize: 15 }}>
               {creating ? "Creating…" : "Create key"}
             </button>
           </div>
@@ -458,10 +458,10 @@ export default function ApiKeysPage() {
         width={480}
         footer={
           <>
-            <button type="button" className="btn btn-secondary" onClick={closeRevoke} disabled={revoking} style={{ fontSize: 15 }}>
+            <button type="button" className="btn btn-secondary" onClick={closeRevoke} disabled={revoking} aria-busy={revoking} style={{ fontSize: 15 }}>
               Keep key
             </button>
-            <button type="button" className="btn" onClick={revoke} disabled={revoking} style={{ fontSize: 15, background: "var(--error)", color: "#FFFFFF" }}>
+            <button type="button" className="btn" onClick={revoke} disabled={revoking} aria-busy={revoking} style={{ fontSize: 15, background: "var(--error)", color: "#FFFFFF" }}>
               {revoking ? "Revoking…" : "Revoke key"}
             </button>
           </>

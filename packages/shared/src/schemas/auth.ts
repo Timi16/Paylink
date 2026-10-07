@@ -22,6 +22,12 @@ export const LoginBody = z
   })
   .strict();
 
+/** The six-digit code emailed at sign-up. Spaces are forgiven. */
+export const VerifyEmailBody = z
+  .object({ code: z.string().transform((v) => v.replace(/\s+/g, "")).pipe(z.string().regex(/^\d{6}$/, "Enter the 6-digit code")) })
+  .strict();
+export type VerifyEmailBody = z.infer<typeof VerifyEmailBody>;
+
 export const ForgotPasswordBody = z.object({ email: Email }).strict();
 export type ForgotPasswordBody = z.infer<typeof ForgotPasswordBody>;
 
@@ -56,6 +62,8 @@ export type UpdateSettingsBody = z.infer<typeof UpdateSettingsBody>;
 export const MerchantSchema = z.object({
   id: z.string(),
   email: z.string(),
+  /** False until the code emailed at sign-up has been entered. The dashboard is locked until then. */
+  emailVerified: z.boolean(),
   businessName: z.string(),
   supportContact: z.string().nullable(),
   defaultWalletId: z.string().nullable(),

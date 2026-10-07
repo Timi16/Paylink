@@ -652,10 +652,10 @@ export default function RequestDetailPage() {
         width={480}
         footer={
           <>
-            <button type="button" className="btn btn-secondary" onClick={closeDialog} disabled={busy}>
+            <button type="button" className="btn btn-secondary" onClick={closeDialog} disabled={busy} aria-busy={busy}>
               Not now
             </button>
-            <button type="button" className="btn btn-primary" disabled={busy} onClick={() => run(`/v1/payment-requests/${encodeURIComponent(request.id)}/accept`, `${title} marked Paid`)}>
+            <button type="button" className="btn btn-primary" disabled={busy} aria-busy={busy} onClick={() => run(`/v1/payment-requests/${encodeURIComponent(request.id)}/accept`, `${title} marked Paid`)}>
               {busy ? "Accepting…" : "Accept as paid"}
             </button>
           </>
@@ -678,10 +678,10 @@ export default function RequestDetailPage() {
         width={480}
         footer={
           <>
-            <button type="button" className="btn btn-secondary" onClick={closeDialog} disabled={busy}>
+            <button type="button" className="btn btn-secondary" onClick={closeDialog} disabled={busy} aria-busy={busy}>
               Keep request
             </button>
-            <button type="button" className="btn" style={{ background: "var(--error)", color: "#FFFFFF" }} disabled={busy} onClick={() => run(`/v1/payment-requests/${encodeURIComponent(request.id)}/cancel`, "Request cancelled. The link is closed.")}>
+            <button type="button" className="btn" style={{ background: "var(--error)", color: "#FFFFFF" }} disabled={busy} aria-busy={busy} onClick={() => run(`/v1/payment-requests/${encodeURIComponent(request.id)}/cancel`, "Request cancelled. The link is closed.")}>
               {busy ? "Cancelling…" : "Cancel request"}
             </button>
           </>

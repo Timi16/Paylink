@@ -60,7 +60,7 @@ export default function ForgotPasswordPage() {
               <input id="email" type="email" className={`input${tried && !emailOk ? " invalid" : ""}`} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@yourbusiness.com" autoComplete="email" autoFocus />
               {tried && !emailOk ? <span className="field-error">Enter a valid email address.</span> : null}
             </div>
-            <button type="submit" className="btn btn-primary btn-lg" disabled={busy}>
+            <button type="submit" className="btn btn-primary btn-lg" disabled={busy} aria-busy={busy}>
               {busy ? "Sending…" : "Send reset link"}
             </button>
           </form>
@@ -79,7 +79,7 @@ export default function ForgotPasswordPage() {
               </div>
             ) : null}
             <div style={{ display: "flex", gap: 16, fontSize: 14, flexWrap: "wrap" }}>
-              <button type="button" className="btn-link" onClick={() => void send(true)} disabled={busy}>
+              <button type="button" className="btn-link" onClick={() => void send(true)} disabled={busy} aria-busy={busy}>
                 {busy ? "Sending…" : resent ? "Sent again" : "Resend email"}
               </button>
               <button

@@ -29,7 +29,7 @@ const NO_LIMITS: Partial<Limits> = {
 
 export async function resetDb(): Promise<void> {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE "RequestEvent", "ChainPayment", "PaymentRequest", "WalletChallenge", "Wallet", "ApiKey", "Session", "PasswordReset", "TrustedDevice", "LoginThrottle", "RateLimit", "Merchant", "Cursor" CASCADE',
+    'TRUNCATE "RequestEvent", "ChainPayment", "PaymentRequest", "WalletChallenge", "Wallet", "ApiKey", "Session", "PasswordReset", "EmailVerification", "TrustedDevice", "LoginThrottle", "RateLimit", "Merchant", "Cursor" CASCADE',
   );
 }
 
@@ -41,11 +41,11 @@ export class CapturingMailer implements Mailer {
   }
 }
 
-export function makeApp(limits: Partial<Limits> = {}, opts: { mailer?: Mailer | null } = {}) {
+export function makeApp(limits: Partial<Limits> = {}, opts: { mailer?: Mailer | null; verifyEmail?: boolean } = {}) {
   const accounts = new FakeAccounts();
   const hub = new LiveHub(prisma, silentLogger);
   const mailer = opts.mailer === undefined ? new CapturingMailer() : opts.mailer;
-  const built = buildApp({ prisma, accounts, hub, logger: silentLogger, mailer, limits: { ...NO_LIMITS, ...limits } });
+  const built = buildApp({ prisma, accounts, hub, logger: silentLogger, mailer, verifyEmail: opts.verifyEmail ?? false, limits: { ...NO_LIMITS, ...limits } });
   return { ...built, accounts, hub, mailer: mailer as CapturingMailer };
 }
 export type TestApp = ReturnType<typeof makeApp>;

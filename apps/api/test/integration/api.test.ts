@@ -348,6 +348,118 @@ describe("auth", () => {
   });
 });
 
+describe("email confirmation at sign-up", () => {
+  const strict = () => makeApp({}, { verifyEmail: true });
+  const codeIn = (text: string) => /code is: (\d{6})/.exec(text)?.[1] as string;
+  async function open(app: ReturnType<typeof strict>, email = `new-${Date.now()}-${Math.round(performance.now())}@example.com`) {
+    const agent = request.agent(app.app);
+    const res = await agent.post("/auth/signup").set("Origin", ORIGIN).send({ email, password: "correct horse battery", businessName: "New Shop" });
+    return { agent, res, email, post: (path: string, body?: object) => agent.post(path).set("Origin", ORIGIN).send(body) };
+  }
+
+  it("a new account gets a six-digit code by email and is locked out of the dashboard until it is entered", async () => {
+    const app = strict();
+    const m = await open(app);
+    expect(m.res.status).toBe(201);
+    expect(m.res.body.merchant.emailVerified).toBe(false);
+    const mail = app.mailer.sent.at(-1)!;
+    expect(mail.to).toBe(m.email);
+    expect(mail.subject).toMatch(/^\d{6} is your PayLink code$/);
+    const code = codeIn(mail.text);
+    // Only a hash of the code is stored.
+    const row = await prisma.emailVerification.findFirstOrThrow();
+    expect(row.codeHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(row)).not.toContain(code);
+
+    // Signed in, but nothing under /v1 works yet.
+    expect((await m.agent.get("/auth/me")).body.merchant.emailVerified).toBe(false);
+    for (const path of ["/v1/wallets", "/v1/payment-requests", "/v1/api-keys", "/v1/summary?from=2026-01-01T00:00:00Z"]) {
+      const blocked = await m.agent.get(path);
+      expect(blocked.status, path).toBe(403);
+      expect(blocked.body.error.code).toBe("EMAIL_NOT_VERIFIED");
+    }
+    expect((await m.post("/v1/wallets", { address: "GAE6HVGQRXFG5BVAAVZBKP44U6JMFHYVDRAVGADJFHBSVS6RX7PETWFV" })).status).toBe(403);
+
+    for (const bad of ["12345", "1234567", "abcdef", ""]) expect((await m.post("/auth/email/verify", { code: bad })).status, bad).toBe(400);
+    const ok = await m.post("/auth/email/verify", { code: ` ${code.slice(0, 3)} ${code.slice(3)} ` }); // typed with a space
+    expect(ok.status).toBe(200);
+    expect(ok.body.merchant.emailVerified).toBe(true);
+    expect((await m.agent.get("/v1/wallets")).status).toBe(200);
+    expect(await prisma.emailVerification.count()).toBe(0);
+    // Confirming again is harmless; asking for another code sends nothing.
+    expect((await m.post("/auth/email/verify", { code })).status).toBe(200);
+    const sent = app.mailer.sent.length;
+    expect((await m.post("/auth/email/resend")).status).toBe(204);
+    expect(app.mailer.sent.length).toBe(sent);
+  });
+
+  it("a wrong code is refused and counted; after five the code is dead and a new one is needed", async () => {
+    const app = strict();
+    const m = await open(app);
+    const code = codeIn(app.mailer.sent.at(-1)!.text);
+    const wrong = code === "000000" ? "111111" : "000000";
+    const first = await m.post("/auth/email/verify", { code: wrong });
+    expect(first.status).toBe(400);
+    expect(first.body.error).toMatchObject({ code: "INVALID_CODE", message: "That code isn't right. 4 tries left." });
+    for (let i = 0; i < 4; i++) expect((await m.post("/auth/email/verify", { code: wrong })).body.error.code).toBe("INVALID_CODE");
+    // The sixth attempt fails even with the right code.
+    const dead = await m.post("/auth/email/verify", { code });
+    expect(dead.status).toBe(400);
+    expect(dead.body.error.code).toBe("CHALLENGE_EXPIRED");
+    expect((await m.agent.get("/auth/me")).body.merchant.emailVerified).toBe(false);
+
+    // A new code can be asked for once a minute.
+    const tooSoon = await m.post("/auth/email/resend");
+    expect(tooSoon.status).toBe(429);
+    expect(Number.parseInt(tooSoon.headers["retry-after"] as string, 10)).toBeGreaterThan(0);
+    await prisma.emailVerification.updateMany({ data: { sentAt: new Date(Date.now() - 61_000) } });
+    expect((await m.post("/auth/email/resend")).status).toBe(204);
+    const fresh = codeIn(app.mailer.sent.at(-1)!.text);
+    expect((await m.post("/auth/email/verify", { code: fresh })).body.merchant.emailVerified).toBe(true);
+  });
+
+  it("a code expires after 15 minutes, is tied to its own account, and parallel guesses cannot beat the limit", async () => {
+    const app = strict();
+    const a = await open(app);
+    const codeA = codeIn(app.mailer.sent.at(-1)!.text);
+    const b = await open(app);
+    const codeB = codeIn(app.mailer.sent.at(-1)!.text);
+    // A's code does nothing for B (unless they happen to be equal).
+    if (codeA !== codeB) expect((await b.post("/auth/email/verify", { code: codeA })).body.error.code).toBe("INVALID_CODE");
+    // Ten guesses at once: at most five are even compared.
+    const wrong = codeA === "999999" ? "888888" : "999999";
+    const burst = await Promise.all(Array.from({ length: 10 }, () => a.post("/auth/email/verify", { code: wrong })));
+    expect(burst.filter((r) => r.body.error.code === "INVALID_CODE").length).toBeLessThanOrEqual(5);
+    expect((await prisma.emailVerification.findUniqueOrThrow({ where: { merchantId: a.res.body.merchant.id } })).attempts).toBe(5);
+    // Expiry.
+    await prisma.emailVerification.updateMany({ where: { merchantId: b.res.body.merchant.id }, data: { expiresAt: new Date(Date.now() - 1000), attempts: 0 } });
+    expect((await b.post("/auth/email/verify", { code: codeB })).body.error.code).toBe("CHALLENGE_EXPIRED");
+    // Both endpoints need a session and the CSRF origin.
+    expect((await anon().post("/auth/email/verify").set("Origin", ORIGIN).send({ code: "123456" })).status).toBe(401);
+    expect((await b.agent.post("/auth/email/resend")).status).toBe(403);
+  });
+
+  it("the account is still created when the code email cannot be sent, and logging in again keeps it locked", async () => {
+    const failing = { async send() { throw new Error("smtp down"); } };
+    const app = makeApp({}, { verifyEmail: true, mailer: failing });
+    const m = await open(app);
+    expect(m.res.status).toBe(201);
+    expect(m.res.body.merchant.emailVerified).toBe(false);
+    const again = request.agent(app.app);
+    const login = await again.post("/auth/login").set("Origin", ORIGIN).send({ email: m.email, password: "correct horse battery" });
+    expect(login.body.merchant.emailVerified).toBe(false);
+    expect((await again.get("/v1/wallets")).status).toBe(403);
+  });
+
+  it("without a mail server there is nothing to confirm: accounts are usable straight away", async () => {
+    const res = await anon().post("/auth/signup").set("Origin", ORIGIN).send({ ...creds, email: "plain@shop.example" });
+    expect(res.body.merchant.emailVerified).toBe(true);
+    const noMail = makeApp({}, { verifyEmail: true, mailer: null });
+    const res2 = await request(noMail.app).post("/auth/signup").set("Origin", ORIGIN).send({ ...creds, email: "nomail@shop.example" });
+    expect(res2.body.merchant.emailVerified).toBe(true);
+  });
+});
+
 describe("API keys", () => {
   it("shows the full key once, stores only its hash, authenticates with Bearer, and can be revoked", async () => {
     const { merchant, wallet } = await setupMerchant(t);

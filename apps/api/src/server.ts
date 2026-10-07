@@ -29,6 +29,8 @@ async function main(): Promise<void> {
     hub,
     logger,
     mailer: createMailer({ smtpUrl: env.SMTP_URL, from: env.MAIL_FROM, production: isProduction }, logger),
+    // Sign-up codes: by default only when a real mail server is configured.
+    verifyEmail: env.EMAIL_VERIFICATION === "on" || (env.EMAIL_VERIFICATION === "auto" && Boolean(env.SMTP_URL)),
   });
 
   const server = app.listen(env.PORT, env.HOST, () => {

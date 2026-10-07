@@ -8,6 +8,7 @@ import {
   SessionIdParamsSchema,
   SignupBody,
   UpdateSettingsBody,
+  VerifyEmailBody,
 } from "@paylink/shared";
 import { env, isProduction } from "../../config/env";
 import { notFound } from "../../lib/errors";
@@ -84,6 +85,17 @@ export function authRoutes(service: AuthService, guards: AuthRouteGuards): Route
     const body = parse(UpdateSettingsBody, req.body);
     const merchant = await service.updateSettings(authOf(req).merchantId, body);
     res.json({ merchant: serializeMerchant(merchant) });
+  });
+
+  router.post("/email/verify", guards.credentialLimiter, guards.requireSession, async (req, res) => {
+    const { code } = parse(VerifyEmailBody, req.body);
+    const merchant = await service.verifyEmail(authOf(req).merchantId, code);
+    res.json({ merchant: serializeMerchant(merchant) });
+  });
+
+  router.post("/email/resend", guards.credentialLimiter, guards.requireSession, async (req, res) => {
+    await service.resendEmailCode(authOf(req).merchantId);
+    res.status(204).end();
   });
 
   router.get("/sessions", guards.readLimiter, guards.requireSession, async (req, res) => {

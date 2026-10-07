@@ -7,7 +7,7 @@ import { pinoHttp } from "pino-http";
 import { env } from "./config/env";
 import { DEFAULT_LIMITS, type AppDeps, type Limits } from "./deps";
 import type { Mailer } from "./lib/mailer";
-import { requireAny, requireSession, sessionOnly, authOf } from "./middleware/auth";
+import { requireAny, requireSession, requireVerifiedEmail, sessionOnly, authOf } from "./middleware/auth";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 import { PgRateLimitStore } from "./middleware/pgRateLimitStore";
 import { limiter } from "./middleware/rateLimit";
@@ -36,11 +36,22 @@ export interface BuiltApp {
   sse: SseRegistry;
 }
 
-export type BuildAppDeps = Omit<AppDeps, "limits" | "mailer"> & { limits?: Partial<Limits>; mailer?: Mailer | null };
+export type BuildAppDeps = Omit<AppDeps, "limits" | "mailer" | "verifyEmail"> & {
+  limits?: Partial<Limits>;
+  mailer?: Mailer | null;
+  verifyEmail?: boolean;
+};
 
 /** Wires everything in a fixed order. Tests import this same function. */
 export function buildApp(input: BuildAppDeps): BuiltApp {
-  const deps: AppDeps = { ...input, mailer: input.mailer ?? null, limits: { ...DEFAULT_LIMITS, ...input.limits } };
+  const mailer = input.mailer ?? null;
+  const deps: AppDeps = {
+    ...input,
+    mailer,
+    // Confirmation needs a way to deliver the code.
+    verifyEmail: Boolean(input.verifyEmail) && mailer !== null,
+    limits: { ...DEFAULT_LIMITS, ...input.limits },
+  };
   const { limits, prisma } = deps;
   const sse = new SseRegistry();
   const app = express();
@@ -156,6 +167,7 @@ export function buildApp(input: BuildAppDeps): BuiltApp {
   v1.use(limiter({ limit: limits.v1PerIpPerMin }));
   v1.use(requireAny(prisma));
   v1.use(requireOrigin);
+  v1.use(requireVerifiedEmail);
   v1.use(limiter({ limit: limits.v1PerMin, key: (req) => `merchant:${authOf(req).merchantId}` }));
   v1.use("/api-keys", sessionOnly, apiKeyRoutes(createApiKeyService(deps)));
   v1.use("/wallets", sessionOnly, walletRoutes(walletService));

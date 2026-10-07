@@ -37,7 +37,7 @@ function LoginForm() {
     try {
       const res = await api.post<{ merchant: Merchant }>("/auth/login", { email: email.trim(), password, remember });
       await mutate("/auth/me", res, { revalidate: false });
-      router.replace(safeNext(params.get("next")));
+      router.replace(res.merchant.emailVerified ? safeNext(params.get("next")) : "/verify-email");
     } catch (err) {
       setError(
         err instanceof ApiError && err.code === "INVALID_CREDENTIALS"
@@ -86,7 +86,7 @@ function LoginForm() {
         <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} style={{ width: 18, height: 18, accentColor: "var(--teal)" }} />
         Keep me logged in for 14 days
       </label>
-      <button type="submit" className="btn btn-primary btn-lg" disabled={busy}>
+      <button type="submit" className="btn btn-primary btn-lg" disabled={busy} aria-busy={busy}>
         {busy ? "Signing in…" : "Sign in"}
       </button>
     </form>

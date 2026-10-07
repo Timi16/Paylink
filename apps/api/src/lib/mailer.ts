@@ -13,7 +13,7 @@ export interface Mailer {
 
 /** Sends through the SMTP server in SMTP_URL (e.g. smtps://user:pass@smtp.example.com:465). */
 export class SmtpMailer implements Mailer {
-  private readonly transport: nodemailer.Transporter;
+  private readonly transport: ReturnType<typeof nodemailer.createTransport>;
 
   constructor(
     smtpUrl: string,

@@ -526,7 +526,7 @@ export default function NewRequestPage() {
             <Link href="/requests" className="btn btn-secondary" style={{ fontSize: 15 }}>
               Cancel
             </Link>
-            <button type="submit" className="btn btn-primary" style={{ fontSize: 15 }} disabled={busy}>
+            <button type="submit" className="btn btn-primary" style={{ fontSize: 15 }} disabled={busy} aria-busy={busy}>
               {busy ? "Creating…" : "Create request"}
             </button>
           </div>

@@ -125,7 +125,6 @@ function FreighterPanel({ checkout, onSent }: Props) {
       >
         {busy ? (
           <>
-            <span className={styles.spinner} aria-hidden="true" />
             Waiting for Freighter…
           </>
         ) : (

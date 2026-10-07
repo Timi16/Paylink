@@ -13,6 +13,8 @@ function Guard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (merchant === null) router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+    // The dashboard stays locked until the email is confirmed.
+    else if (merchant && !merchant.emailVerified) router.replace("/verify-email");
   }, [merchant, pathname, router]);
 
   if (error) {
@@ -26,7 +28,7 @@ function Guard({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
-  if (!merchant) return <div style={{ minHeight: "100vh" }} aria-busy="true" />;
+  if (!merchant || !merchant.emailVerified) return <div style={{ minHeight: "100vh" }} aria-busy="true" />;
   return (
     <LiveProvider>
       <AppShell merchant={merchant}>{children}</AppShell>

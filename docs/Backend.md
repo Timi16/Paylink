@@ -273,6 +273,12 @@ currentPassword, newPassword
 POST /auth/settings
 any of businessName, supportContact, defaultWalletId, defaultExpiryMinutes, autoMatchByAmount
 200 { merchant }
+POST /auth/email/verify
+code (6 digits)
+200 { merchant }; 400 INVALID_CODE (with tries left) or CHALLENGE_EXPIRED
+POST /auth/email/resend
+—
+204; at most one code a minute (429 with Retry-After)
 POST /auth/password/forgot
 email
 204 always (emails a one-hour, single-use link to {WEB_ORIGIN}/reset-password?token=…; 503 if SMTP_URL is not set in production)
@@ -427,10 +433,14 @@ SESSION_SECRET
 64 hex chars
 api
 ≥ 32 bytes
+EMAIL_VERIFICATION
+auto
+api
+auto (on when SMTP_URL is set) | on | off. New accounts confirm their email with a 6-digit code (15 minutes, 5 tries) and get 403 EMAIL_NOT_VERIFIED on every /v1 route until they do. Accounts created before this existed count as confirmed
 SMTP_URL, MAIL_FROM
 
 api
-Optional; password reset email. Without SMTP_URL: printed to the log in development, off in production
+Optional; sign-up codes and password reset email. Without SMTP_URL: printed to the log in development, off in production
 ALERT_TELEGRAM_BOT_TOKEN, ALERT_TELEGRAM_CHAT_ID
 
 worker

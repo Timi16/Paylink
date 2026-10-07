@@ -153,7 +153,7 @@ export function AddWalletForm({ existing, onAdded, labelPlaceholder = "e.g. Lekk
           {error}
         </div>
       ) : null}
-      <button type="submit" className="btn btn-primary" disabled={busy || isSecret} style={{ alignSelf: "flex-start", fontSize: 15 }}>
+      <button type="submit" className="btn btn-primary" disabled={busy || isSecret} aria-busy={busy} style={{ alignSelf: "flex-start", fontSize: 15 }}>
         {busy ? "Adding…" : "Add wallet"}
       </button>
     </form>

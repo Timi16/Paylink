@@ -119,7 +119,7 @@ export function BusinessCard({ merchant }: { merchant: Merchant }) {
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           {dirty ? (
-            <button type="button" className="btn btn-secondary" onClick={discard} disabled={busy} style={{ padding: "0 18px", fontSize: 15 }}>
+            <button type="button" className="btn btn-secondary" onClick={discard} disabled={busy} aria-busy={busy} style={{ padding: "0 18px", fontSize: 15 }}>
               Discard
             </button>
           ) : null}

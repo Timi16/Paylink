@@ -234,6 +234,18 @@ dialog[open]::backdrop { animation: fade 0.18s ease-out; }
 .lift { transition: transform var(--t-base) var(--ease-out), box-shadow var(--t-base) var(--ease-out), border-color var(--t-base) var(--ease-out); }
 a.lift:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); border-color: var(--border-input); text-decoration: none; }
 
+/* A button that is working shows a spinning circle before its label (set aria-busy on it). */
+@keyframes spin { to { transform: rotate(360deg); } }
+.btn[aria-busy="true"] { cursor: progress; }
+/* Secondary buttons (Cancel, Not yet…) are disabled while the action runs but do not spin. */
+.btn[aria-busy="true"]:not(.btn-secondary):not(.btn-link)::before {
+  content: ""; width: 16px; height: 16px; flex-shrink: 0; border-radius: 50%;
+  border: 2.5px solid currentColor; border-right-color: transparent; animation: spin 0.7s linear infinite;
+}
+.btn[aria-busy="true"]:disabled { opacity: 0.85; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  /* Kept: a "working" indicator is information, not decoration. Slowed down. */
+  .btn[aria-busy="true"]:not(.btn-secondary):not(.btn-link)::before { animation: spin 1.4s linear infinite !important; }
 }

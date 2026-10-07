@@ -29,6 +29,9 @@ export const EnvSchema = z.object({
   // Outgoing email (password reset links). Without it, production answers "not set up".
   SMTP_URL: z.string().regex(/^smtps?:\/\//, "must be an smtp:// or smtps:// URL").optional(),
   MAIL_FROM: z.string().min(3).default("PayLink <no-reply@paylink.local>"),
+  // Sign-up email codes. auto = on when SMTP_URL is set. "on" without SMTP_URL only works in
+  // development, where the code is printed in the API log.
+  EMAIL_VERIFICATION: z.enum(["auto", "on", "off"]).default("auto"),
   ALERT_TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
   ALERT_TELEGRAM_CHAT_ID: z.string().min(1).optional(),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),

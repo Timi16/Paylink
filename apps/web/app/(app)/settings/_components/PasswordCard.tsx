@@ -123,7 +123,7 @@ export function PasswordCard({ email }: { email: string }) {
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <span style={{ fontSize: 13, color: "var(--slate)" }}>At least 10 characters. Updating it logs you out everywhere else.</span>
-          <button type="submit" className="btn btn-primary" disabled={busy} style={{ fontSize: 15 }}>
+          <button type="submit" className="btn btn-primary" disabled={busy} aria-busy={busy} style={{ fontSize: 15 }}>
             {busy ? "Updating…" : "Update password"}
           </button>
         </div>

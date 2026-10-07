@@ -39,7 +39,7 @@ export default function SignupPage() {
     try {
       const res = await api.post<{ merchant: Merchant }>("/auth/signup", { businessName: biz.trim(), email: email.trim(), password });
       await mutate("/auth/me", res, { revalidate: false });
-      router.replace("/get-started");
+      router.replace(res.merchant.emailVerified ? "/get-started" : "/verify-email");
     } catch (err) {
       if (err instanceof ApiError && err.code === "EMAIL_TAKEN") setEmailTaken(true);
       else setError(errorMessage(err));
@@ -121,7 +121,7 @@ export default function SignupPage() {
               Tick the box to continue.
             </span>
           ) : null}
-          <button type="submit" className="btn btn-primary btn-lg" disabled={busy}>
+          <button type="submit" className="btn btn-primary btn-lg" disabled={busy} aria-busy={busy}>
             {busy ? "Creating account…" : "Create account"}
           </button>
           <span className="hint" style={{ textAlign: "center" }}>

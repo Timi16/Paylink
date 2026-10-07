@@ -97,7 +97,7 @@ export function SessionsCard() {
                       type="button"
                       className="btn btn-sm"
                       onClick={() => end(s, device.label)}
-                      disabled={busy}
+                      disabled={busy} aria-busy={busy}
                       aria-label={`Log out ${device.label}, signed in ${formatDate(s.createdAt)}`}
                       style={{ height: 40, padding: "0 14px", background: "var(--surface)", borderColor: "var(--border)", color: "var(--ink)" }}
                     >
@@ -131,7 +131,7 @@ export function SessionsCard() {
         </div>
       )}
       {others.length > 0 ? (
-        <button type="button" className="btn btn-secondary" onClick={() => setConfirmAll(true)} disabled={busy} style={{ padding: "0 18px", fontSize: 15, color: "var(--error)" }}>
+        <button type="button" className="btn btn-secondary" onClick={() => setConfirmAll(true)} disabled={busy} aria-busy={busy} style={{ padding: "0 18px", fontSize: 15, color: "var(--error)" }}>
           Log out everywhere else
         </button>
       ) : null}
@@ -143,10 +143,10 @@ export function SessionsCard() {
         width={480}
         footer={
           <>
-            <button type="button" className="btn btn-secondary" onClick={() => setConfirmAll(false)} disabled={endingAll} style={{ padding: "0 18px", fontSize: 15 }}>
+            <button type="button" className="btn btn-secondary" onClick={() => setConfirmAll(false)} disabled={endingAll} aria-busy={endingAll} style={{ padding: "0 18px", fontSize: 15 }}>
               Cancel
             </button>
-            <button type="button" className="btn" onClick={endAll} disabled={endingAll} style={{ fontSize: 15, background: "var(--error)", color: "#FFFFFF" }}>
+            <button type="button" className="btn" onClick={endAll} disabled={endingAll} aria-busy={endingAll} style={{ fontSize: 15, background: "var(--error)", color: "#FFFFFF" }}>
               {endingAll ? "Logging out…" : "Log them out"}
             </button>
           </>

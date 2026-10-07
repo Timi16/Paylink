@@ -358,7 +358,7 @@ function AssignDialog({ payment, onClose, onDone }: { payment: ChainPayment; onC
       width={540}
       footer={
         <>
-          <button type="button" className="btn btn-secondary" onClick={onClose} disabled={busy} style={{ padding: "0 18px", fontSize: 15 }}>
+          <button type="button" className="btn btn-secondary" onClick={onClose} disabled={busy} aria-busy={busy} style={{ padding: "0 18px", fontSize: 15 }}>
             Cancel
           </button>
           <button
@@ -391,7 +391,7 @@ function AssignDialog({ payment, onClose, onDone }: { payment: ChainPayment; onC
           placeholder="Search by order or description"
         />
       </div>
-      <fieldset style={{ border: "none", margin: 0, padding: 0, minWidth: 0 }} disabled={busy}>
+      <fieldset style={{ border: "none", margin: 0, padding: 0, minWidth: 0 }} disabled={busy} aria-busy={busy}>
         <legend style={{ fontSize: 13, fontWeight: 700, color: "var(--slate)", padding: 0, marginBottom: 8 }}>Which request is this for?</legend>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 320, overflowY: "auto", padding: 2 }}>
           {loading ? (
@@ -555,10 +555,10 @@ function RefundDialog({ payment, onClose, onDone }: { payment: ChainPayment; onC
           </div>
         ) : null}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
-          <button type="button" className="btn btn-secondary" onClick={onClose} disabled={busy} style={{ padding: "0 18px", fontSize: 15 }}>
+          <button type="button" className="btn btn-secondary" onClick={onClose} disabled={busy} aria-busy={busy} style={{ padding: "0 18px", fontSize: 15 }}>
             Not yet
           </button>
-          <button type="submit" className="btn btn-primary" disabled={busy} style={{ fontSize: 15 }}>
+          <button type="submit" className="btn btn-primary" disabled={busy} aria-busy={busy} style={{ fontSize: 15 }}>
             {busy ? "Saving…" : "Yes, mark refunded"}
           </button>
         </div>

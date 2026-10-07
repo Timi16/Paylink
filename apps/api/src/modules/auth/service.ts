@@ -1,6 +1,7 @@
 import type { Merchant, Session } from "@prisma/client";
 import type { Merchant as MerchantDto, Session as SessionDto, UpdateSettingsBody } from "@paylink/shared";
 import argon2 from "argon2";
+import { randomInt, timingSafeEqual } from "node:crypto";
 import { uniqueViolation } from "../../db/prisma";
 import type { AppDeps } from "../../deps";
 import { AppError } from "../../lib/errors";
@@ -14,6 +15,9 @@ export const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 export const SHORT_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 export const DEVICE_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 const RESET_TTL_MS = 60 * 60 * 1000;
+const CODE_TTL_MS = 15 * 60 * 1000;
+const CODE_COOLDOWN_MS = 60 * 1000;
+const CODE_MAX_ATTEMPTS = 5;
 const RESET_COOLDOWN_MS = 60 * 1000;
 const MAX_DEVICES = 20;
 const ARGON_OPTIONS = { type: argon2.argon2id } as const;
@@ -27,6 +31,7 @@ export function serializeMerchant(m: Merchant): MerchantDto {
   return {
     id: m.id,
     email: m.email,
+    emailVerified: m.emailVerifiedAt !== null,
     businessName: m.businessName,
     supportContact: m.supportContact,
     defaultWalletId: m.defaultWalletId,
@@ -95,6 +100,27 @@ export function createAuthService(deps: AppDeps) {
       await prisma.trustedDevice.deleteMany({ where: { id: { in: stale.map((d) => d.id) } } });
     }
     return token;
+  }
+
+  const hashCode = (merchantId: string, code: string) => hashSessionToken(`email-code:${merchantId}:${code}`);
+
+  /** Makes a new six-digit code (replacing any earlier one) and emails it. */
+  async function sendCode(merchant: Merchant): Promise<void> {
+    if (!deps.mailer) throw new AppError("SERVICE_UNAVAILABLE", "Email isn't set up on this server yet");
+    const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
+    const data = { codeHash: hashCode(merchant.id, code), expiresAt: new Date(Date.now() + CODE_TTL_MS), attempts: 0, sentAt: new Date() };
+    await prisma.emailVerification.upsert({ where: { merchantId: merchant.id }, create: { merchantId: merchant.id, ...data }, update: data });
+    await deps.mailer.send({
+      to: merchant.email,
+      subject: `${code} is your PayLink code`,
+      text: [
+        `Hi ${merchant.businessName},`,
+        "",
+        `Your PayLink confirmation code is: ${code}`,
+        "",
+        "It works for 15 minutes. If you didn't create a PayLink account, ignore this email.",
+      ].join("\n"),
+    });
   }
 
   return {
@@ -197,10 +223,14 @@ export function createAuthService(deps: AppDeps) {
       const passwordHash = await argon2.hash(input.password, ARGON_OPTIONS);
       let merchant: Merchant;
       try {
-        merchant = await repo.createMerchant(prisma, {
-          email: input.email,
-          passwordHash,
-          businessName: input.businessName,
+        merchant = await prisma.merchant.create({
+          data: {
+            email: input.email,
+            passwordHash,
+            businessName: input.businessName,
+            // Without a mail server there is no way to deliver a code, so nothing to confirm.
+            emailVerifiedAt: deps.verifyEmail ? null : new Date(),
+          },
         });
       } catch (err) {
         if (uniqueViolation(err)) {
@@ -208,11 +238,56 @@ export function createAuthService(deps: AppDeps) {
         }
         throw err;
       }
+      // The account exists even if this email fails to go out; the code can be sent again.
+      if (deps.verifyEmail) await sendCode(merchant).catch((err: unknown) => deps.logger.error({ err }, "sign-up code email failed"));
       return {
         merchant,
         token: await startSession(merchant.id, client),
         deviceToken: await trustDevice(merchant.id, null),
       };
+    },
+
+    /** Sends a fresh code, at most once a minute. A confirmed account gets nothing. */
+    async resendEmailCode(merchantId: string): Promise<void> {
+      const merchant = await repo.findMerchant(prisma, merchantId);
+      if (!merchant) throw new AppError("UNAUTHENTICATED", "Authentication required");
+      if (merchant.emailVerifiedAt) return;
+      const current = await prisma.emailVerification.findUnique({ where: { merchantId } });
+      const wait = current ? CODE_COOLDOWN_MS - (Date.now() - current.sentAt.getTime()) : 0;
+      if (wait > 0) {
+        throw new AppError("RATE_LIMITED", "A code was just sent. Give it a minute before asking again.", { retryAfter: Math.ceil(wait / 1000) });
+      }
+      await sendCode(merchant);
+    },
+
+    /**
+     * Confirms the email with the six-digit code. A code lasts 15 minutes and allows five
+     * wrong guesses; after that a new one must be sent, so the code cannot be brute-forced.
+     */
+    async verifyEmail(merchantId: string, code: string): Promise<Merchant> {
+      const merchant = await repo.findMerchant(prisma, merchantId);
+      if (!merchant) throw new AppError("UNAUTHENTICATED", "Authentication required");
+      if (merchant.emailVerifiedAt) return merchant;
+      const expired = () => new AppError("CHALLENGE_EXPIRED", "This code has expired. Send a new one.");
+      // Count the attempt first, atomically, so parallel guesses cannot exceed the limit.
+      const counted = await prisma.emailVerification.updateMany({
+        where: { merchantId, expiresAt: { gt: new Date() }, attempts: { lt: CODE_MAX_ATTEMPTS } },
+        data: { attempts: { increment: 1 } },
+      });
+      if (counted.count === 0) throw expired();
+      const row = await prisma.emailVerification.findUnique({ where: { merchantId } });
+      if (!row) throw expired();
+      const given = Buffer.from(hashCode(merchantId, code), "hex");
+      const wanted = Buffer.from(row.codeHash, "hex");
+      if (given.length !== wanted.length || !timingSafeEqual(given, wanted)) {
+        const left = CODE_MAX_ATTEMPTS - row.attempts;
+        throw new AppError("INVALID_CODE", left > 0 ? `That code isn't right. ${left} ${left === 1 ? "try" : "tries"} left.` : "That code isn't right. Send a new one.");
+      }
+      const [updated] = await prisma.$transaction([
+        prisma.merchant.update({ where: { id: merchantId }, data: { emailVerifiedAt: new Date() } }),
+        prisma.emailVerification.deleteMany({ where: { merchantId } }),
+      ]);
+      return updated;
     },
 
     /**

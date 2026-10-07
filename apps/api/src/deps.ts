@@ -37,4 +37,9 @@ export interface AppDeps {
   limits: Limits;
   /** null when outgoing email is not configured. */
   mailer: Mailer | null;
+  /**
+   * New accounts must confirm their email with a code before using the dashboard. On only
+   * when real email sending is configured; otherwise accounts are confirmed at sign-up.
+   */
+  verifyEmail: boolean;
 }

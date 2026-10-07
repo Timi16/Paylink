@@ -16,6 +16,14 @@ WEB_URL=http://localhost:3000 API_URL=http://localhost:4100 pnpm --filter @payli
   wrong network and on the wrong account, and checks the exact message and transaction Freighter is asked
   to sign.
 
+- `verify.mjs`: sign-up, the spinner on the button, the emailed 6-digit code and the verify-email page.
+  Run the API in development with `EMAIL_VERIFICATION=on` and `SMTP_URL` empty, so the code is printed
+  in the API log, and pass that log's path as `API_LOG`.
+
+`walkthrough.mjs`, `freighter.mjs`, `drills.mjs` and the testnet scenario create throwaway accounts with
+`@example.com` addresses, so run the API for them with `EMAIL_VERIFICATION=off` (or no `SMTP_URL`);
+otherwise every account waits for a code that goes nowhere.
+
 Neither replaces one manual pass with the real Freighter extension.
 
 ## Failure drills
