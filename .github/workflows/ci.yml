@@ -22,7 +22,7 @@ jobs:
       DATABASE_URL: postgresql://paylink:paylink@localhost:5432/paylink_test
       NEXT_PUBLIC_API_URL: https://api.paylink.example
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
