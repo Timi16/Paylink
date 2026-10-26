@@ -19,7 +19,7 @@
     "db:status": "node --env-file-if-exists=../../.env node_modules/prisma/build/index.js migrate status"
   },
   "dependencies": {
-    "@asteasolutions/zod-to-openapi": "^7.3.0",
+    "@asteasolutions/zod-to-openapi": "^9.1.0",
     "@paylink/shared": "workspace:*",
     "@prisma/client": "^6.0.0",
     "@scalar/express-api-reference": "*",
