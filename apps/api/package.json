@@ -43,7 +43,7 @@
     "@types/cookie-parser": "*",
     "@types/cors": "*",
     "@types/express": "^5.0.0",
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.6.4",
     "@types/nodemailer": "^8.0.2",
     "@types/pg": "*",
     "@types/supertest": "*",
